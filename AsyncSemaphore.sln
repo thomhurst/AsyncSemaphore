@@ -6,6 +6,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.UnitTests", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.Pipeline", "AsyncSemaphore.Pipeline\AsyncSemaphore.Pipeline.csproj", "{482D3647-8ECE-459B-9B9C-CC10F94D22ED}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.Analyzers", "AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.csproj", "{0B9E2544-85BD-4BD8-A6E0-509EF8A1812A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.Analyzers.Sample", "AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.Sample\AsyncSemaphore.Analyzers.Sample.csproj", "{29C46467-A150-4C6C-98EB-6D326B7DDC06}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.Analyzers.Tests", "AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.Tests\AsyncSemaphore.Analyzers.Tests.csproj", "{9A4DA842-8896-485A-A6DC-9A56D2A46E89}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -24,5 +30,17 @@ Global
 		{482D3647-8ECE-459B-9B9C-CC10F94D22ED}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{482D3647-8ECE-459B-9B9C-CC10F94D22ED}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{482D3647-8ECE-459B-9B9C-CC10F94D22ED}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0B9E2544-85BD-4BD8-A6E0-509EF8A1812A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0B9E2544-85BD-4BD8-A6E0-509EF8A1812A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0B9E2544-85BD-4BD8-A6E0-509EF8A1812A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0B9E2544-85BD-4BD8-A6E0-509EF8A1812A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{29C46467-A150-4C6C-98EB-6D326B7DDC06}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{29C46467-A150-4C6C-98EB-6D326B7DDC06}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{29C46467-A150-4C6C-98EB-6D326B7DDC06}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{29C46467-A150-4C6C-98EB-6D326B7DDC06}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9A4DA842-8896-485A-A6DC-9A56D2A46E89}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9A4DA842-8896-485A-A6DC-9A56D2A46E89}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9A4DA842-8896-485A-A6DC-9A56D2A46E89}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9A4DA842-8896-485A-A6DC-9A56D2A46E89}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

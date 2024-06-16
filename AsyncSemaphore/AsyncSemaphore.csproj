@@ -6,4 +6,8 @@
         <RootNamespace>Semaphores</RootNamespace>
     </PropertyGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.csproj" />
+    </ItemGroup>
+
 </Project>

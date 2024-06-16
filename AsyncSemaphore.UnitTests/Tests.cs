@@ -21,6 +21,8 @@ public class Tests
     {
         var semaphore = new Semaphores.AsyncSemaphore(1);
 
+        var sema = semaphore.WaitAsync();
+        
         var time = await Measure(async () =>
         {
             for (var i = 0; i < loopCount; i++)
