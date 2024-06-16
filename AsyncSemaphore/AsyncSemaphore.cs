@@ -1,8 +1,4 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
-
-namespace AsyncSemaphore;
+namespace Semaphores;
 
 public class AsyncSemaphore(int initialCount, int maxCount) : IDisposable
 {
@@ -27,6 +23,6 @@ public class AsyncSemaphore(int initialCount, int maxCount) : IDisposable
     /// <inheritdoc cref="IDisposable.Dispose"/>>
     public void Dispose()
     {
-        _semaphoreSlim?.Dispose();
+        _semaphoreSlim.Dispose();
     }
 }

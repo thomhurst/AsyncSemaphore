@@ -1,7 +1,4 @@
-using System;
-using System.Threading;
-
-namespace AsyncSemaphore;
+namespace Semaphores;
 
 internal class AsyncSemaphoreLock(SemaphoreSlim semaphoreSlim) : IDisposable
 {

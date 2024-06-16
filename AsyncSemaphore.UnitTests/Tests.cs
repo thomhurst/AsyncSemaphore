@@ -5,7 +5,7 @@ public class Tests
     [Test]
     public async Task Can_Enter_Immediately()
     {
-        var semaphore = new AsyncSemaphore(1, 1);
+        var semaphore = new Semaphores.AsyncSemaphore(1, 1);
 
         var time = await Measure(async () =>
         {
@@ -19,7 +19,7 @@ public class Tests
     [EnumerableMethodDataSource(nameof(LoopCounts))]
     public async Task WaitsForPreviousSemaphore(int loopCount)
     {
-        var semaphore = new AsyncSemaphore(1, 1);
+        var semaphore = new Semaphores.AsyncSemaphore(1, 1);
 
         var time = await Measure(async () =>
         {
