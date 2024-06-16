@@ -1,5 +1,5 @@
-using AsyncSemaphore.Extensions;
 using AsyncSemaphore.Pipeline.Settings;
+using EnumerableAsyncProcessor.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ModularPipelines.Attributes;
