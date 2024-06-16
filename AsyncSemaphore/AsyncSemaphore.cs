@@ -1,8 +1,8 @@
 namespace Semaphores;
 
-public class AsyncSemaphore(int initialCount, int maxCount) : IDisposable
+public class AsyncSemaphore(int maxCount) : IDisposable
 {
-    private readonly SemaphoreSlim _semaphoreSlim = new(initialCount, maxCount);
+    private readonly SemaphoreSlim _semaphoreSlim = new(maxCount, maxCount);
 
     /// <inheritdoc cref="SemaphoreSlim.WaitAsync()"/>>
     public Task<IDisposable> WaitAsync(CancellationToken cancellationToken = default)
