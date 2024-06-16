@@ -20,10 +20,9 @@ public class RunUnitTestsModule : Module<List<CommandResult>>
                      .GetFiles(file => file.Path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
                                        && file.Path.Contains("UnitTests", StringComparison.OrdinalIgnoreCase)))
         {
-            results.Add(await context.DotNet().Test(new DotNetTestOptions
+            results.Add(await context.DotNet().Run(new DotNetRunOptions
             {
-                ProjectSolutionDirectoryDllExe = unitTestProjectFile.Path,
-                CommandLogging = CommandLogging.Input | CommandLogging.Error,
+                Project = unitTestProjectFile
             }, cancellationToken));
         }
 
