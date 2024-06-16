@@ -7,7 +7,7 @@ No more `try/finally` code blocks!
 Usage:
 
 ```csharp
-private readonly AsyncSemaphore _asyncSemaphore = new AsyncSemaphore(1, 1);
+private readonly AsyncSemaphore _asyncSemaphore = new AsyncSemaphore(1);
 
 public async Task MyMethod()
 {
