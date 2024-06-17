@@ -6,7 +6,7 @@ public class Tests
     public async Task Can_Enter_Immediately()
     {
         var semaphore = new Semaphores.AsyncSemaphore(1);
-
+        
         var time = await Measure(async () =>
         {
             using var @lock = await semaphore.WaitAsync();
@@ -20,7 +20,7 @@ public class Tests
     public async Task WaitsForPreviousSemaphore(int loopCount)
     {
         var semaphore = new Semaphores.AsyncSemaphore(1);
-
+        
         var time = await Measure(async () =>
         {
             for (var i = 0; i < loopCount; i++)

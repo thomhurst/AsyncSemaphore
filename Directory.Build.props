@@ -20,7 +20,6 @@
     </PropertyGroup>
     
     <PropertyGroup>
-        <CodeAnalysisRuleSet>$(MSBuildThisFileDirectory).ruleset</CodeAnalysisRuleSet>
         <StyleCopTreatErrorsAsWarnings>false</StyleCopTreatErrorsAsWarnings>
         <AnalysisLevel>preview</AnalysisLevel>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

@@ -13,7 +13,7 @@ using ModularPipelines.Modules;
 namespace AsyncSemaphore.Pipeline.Modules;
 
 [DependsOn<RunUnitTestsModule>]
-[DependsOn<PackagePathsParserModule>]
+[DependsOn<PackagePathsModule>]
 public class UploadPackagesToNugetModule : Module<CommandResult[]>
 {
     private readonly IOptions<NuGetSettings> _options;
@@ -25,7 +25,7 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
 
     protected override async Task OnBeforeExecute(IPipelineContext context)
     {
-        var packagePaths = await GetModule<PackagePathsParserModule>();
+        var packagePaths = await GetModule<PackagePathsModule>();
 
         foreach (var packagePath in packagePaths.Value!)
         {
@@ -66,7 +66,7 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
             return await NothingAsync();
         }
 
-        var packagePaths = await GetModule<PackagePathsParserModule>();
+        var packagePaths = await GetModule<PackagePathsModule>();
 
         return await packagePaths.Value!.SelectAsync(async file => await context.DotNet()
             .Nuget
