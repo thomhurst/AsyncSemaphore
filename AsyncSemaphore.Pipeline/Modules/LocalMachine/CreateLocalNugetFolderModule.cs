@@ -7,7 +7,7 @@ using ModularPipelines.Modules;
 namespace AsyncSemaphore.Pipeline.Modules.LocalMachine;
 
 [DependsOn<RunUnitTestsModule>]
-[DependsOn<PackagePathsParserModule>]
+[DependsOn<PackagePathsModule>]
 public class CreateLocalNugetFolderModule : Module<Folder>
 {
     protected override async Task<Folder?> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)

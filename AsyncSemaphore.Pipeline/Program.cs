@@ -33,5 +33,5 @@ await PipelineHostBuilder.Create()
     .AddModule<NugetVersionGeneratorModule>()
     .AddModule<PackProjectsModule>()
     .AddModule<PackageFilesRemovalModule>()
-    .AddModule<PackagePathsParserModule>()
+    .AddModule<PackagePathsModule>()
     .ExecutePipelineAsync();

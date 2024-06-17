@@ -10,13 +10,13 @@ using ModularPipelines.Modules;
 namespace AsyncSemaphore.Pipeline.Modules.LocalMachine;
 
 [DependsOn<AddLocalNugetSourceModule>]
-[DependsOn<PackagePathsParserModule>]
+[DependsOn<PackagePathsModule>]
 [DependsOn<CreateLocalNugetFolderModule>]
 public class UploadPackagesToLocalNuGetModule : Module<CommandResult[]>
 {
     protected override async Task OnBeforeExecute(IPipelineContext context)
     {
-        var packagePaths = await GetModule<PackagePathsParserModule>();
+        var packagePaths = await GetModule<PackagePathsModule>();
         foreach (var packagePath in packagePaths.Value!)
         {
             context.Logger.LogInformation("[Local Directory] Uploading {File}", packagePath);
@@ -28,7 +28,7 @@ public class UploadPackagesToLocalNuGetModule : Module<CommandResult[]>
     protected override async Task<CommandResult[]?> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
     {
         var localRepoLocation = await GetModule<CreateLocalNugetFolderModule>();
-        var packagePaths = await GetModule<PackagePathsParserModule>();
+        var packagePaths = await GetModule<PackagePathsModule>();
         return await packagePaths.Value!.SelectAsync(async file => await context.DotNet()
             .Nuget
             .Push(new DotNetNugetPushOptions(file)
