@@ -9,7 +9,7 @@
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
         <IsRoslynComponent>true</IsRoslynComponent>
 
-        <RootNamespace>AsyncSemaphore.Analyzers</RootNamespace>
+        <RootNamespace>Semaphores.Analyzers</RootNamespace>
         <AssemblyName>AsyncSemaphore.Analyzers</AssemblyName>
         
         <IsPackable>true</IsPackable>
