@@ -18,34 +18,34 @@
     <resheader name="writer">
         <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
     </resheader>
-    <data name="AB0001Description" xml:space="preserve">
+    <data name="SEM0001Description" xml:space="preserve">
         <value>Must await WaitAsync.</value>
     </data>
-    <data name="AB0001MessageFormat" xml:space="preserve">
+    <data name="SEM0001MessageFormat" xml:space="preserve">
         <value>Must await WaitAsync</value>
     </data>
-    <data name="AB0001Title" xml:space="preserve">
+    <data name="SEM0001Title" xml:space="preserve">
         <value>Must await WaitAsync</value>
     </data>
-    <data name="AB0001CodeFixTitle" xml:space="preserve">
+    <data name="SEM0001CodeFixTitle" xml:space="preserve">
         <value>Await Method</value>
     </data>
-    <data name="AB0002Description" xml:space="preserve">
+    <data name="SEM0002Description" xml:space="preserve">
         <value>Must assign lock handle to variable.</value>
     </data>
-    <data name="AB0002MessageFormat" xml:space="preserve">
+    <data name="SEM0002MessageFormat" xml:space="preserve">
         <value>Must assign lock handle to variable</value>
     </data>
-    <data name="AB0002Title" xml:space="preserve">
+    <data name="SEM0002Title" xml:space="preserve">
         <value>Must assign lock handle to variable</value>
     </data>
-    <data name="AB0003Description" xml:space="preserve">
+    <data name="SEM0003Description" xml:space="preserve">
         <value>Must use `using` keyword on lock handle.</value>
     </data>
-    <data name="AB0003MessageFormat" xml:space="preserve">
+    <data name="SEM0003MessageFormat" xml:space="preserve">
         <value>Must use `using` keyword on lock handle</value>
     </data>
-    <data name="AB0003Title" xml:space="preserve">
+    <data name="SEM0003Title" xml:space="preserve">
         <value>Must use `using` keyword on lock handle</value>
     </data>
 </root>

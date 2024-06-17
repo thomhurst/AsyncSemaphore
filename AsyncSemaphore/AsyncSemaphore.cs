@@ -1,3 +1,5 @@
+#pragma warning disable SEM0001
+
 namespace Semaphores;
 
 public class AsyncSemaphore(int maxCount) : IDisposable

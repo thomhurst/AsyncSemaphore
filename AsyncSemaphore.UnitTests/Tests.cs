@@ -7,6 +7,8 @@ public class Tests
     {
         var semaphore = new Semaphores.AsyncSemaphore(1);
 
+        using var handle = await semaphore.WaitAsync();
+
         var time = await Measure(async () =>
         {
             using var @lock = await semaphore.WaitAsync();
@@ -20,8 +22,6 @@ public class Tests
     public async Task WaitsForPreviousSemaphore(int loopCount)
     {
         var semaphore = new Semaphores.AsyncSemaphore(1);
-
-        var sema = semaphore.WaitAsync();
         
         var time = await Measure(async () =>
         {

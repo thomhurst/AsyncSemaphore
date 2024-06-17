@@ -62,90 +62,90 @@ namespace AsyncSemaphore.Analyzers {
         /// <summary>
         ///   Looks up a localized string similar to Await Method.
         /// </summary>
-        internal static string AB0001CodeFixTitle {
+        internal static string SEM0001CodeFixTitle {
             get {
-                return ResourceManager.GetString("AB0001CodeFixTitle", resourceCulture);
+                return ResourceManager.GetString("SEM0001CodeFixTitle", resourceCulture);
             }
         }
         
         /// <summary>
         ///   Looks up a localized string similar to Must await WaitAsync..
         /// </summary>
-        internal static string AB0001Description {
+        internal static string SEM0001Description {
             get {
-                return ResourceManager.GetString("AB0001Description", resourceCulture);
+                return ResourceManager.GetString("SEM0001Description", resourceCulture);
             }
         }
         
         /// <summary>
         ///   Looks up a localized string similar to Must await WaitAsync.
         /// </summary>
-        internal static string AB0001MessageFormat {
+        internal static string SEM0001MessageFormat {
             get {
-                return ResourceManager.GetString("AB0001MessageFormat", resourceCulture);
+                return ResourceManager.GetString("SEM0001MessageFormat", resourceCulture);
             }
         }
         
         /// <summary>
         ///   Looks up a localized string similar to Must await WaitAsync.
         /// </summary>
-        internal static string AB0001Title {
+        internal static string SEM0001Title {
             get {
-                return ResourceManager.GetString("AB0001Title", resourceCulture);
+                return ResourceManager.GetString("SEM0001Title", resourceCulture);
             }
         }
         
         /// <summary>
         ///   Looks up a localized string similar to Must assign lock handle to variable..
         /// </summary>
-        internal static string AB0002Description {
+        internal static string SEM0002Description {
             get {
-                return ResourceManager.GetString("AB0002Description", resourceCulture);
+                return ResourceManager.GetString("SEM0002Description", resourceCulture);
             }
         }
         
         /// <summary>
         ///   Looks up a localized string similar to Must assign lock handle to variable.
         /// </summary>
-        internal static string AB0002MessageFormat {
+        internal static string SEM0002MessageFormat {
             get {
-                return ResourceManager.GetString("AB0002MessageFormat", resourceCulture);
+                return ResourceManager.GetString("SEM0002MessageFormat", resourceCulture);
             }
         }
         
         /// <summary>
         ///   Looks up a localized string similar to Must assign lock handle to variable.
         /// </summary>
-        internal static string AB0002Title {
+        internal static string SEM0002Title {
             get {
-                return ResourceManager.GetString("AB0002Title", resourceCulture);
+                return ResourceManager.GetString("SEM0002Title", resourceCulture);
             }
         }
         
         /// <summary>
         ///   Looks up a localized string similar to Must use `using` keyword on lock handle..
         /// </summary>
-        internal static string AB0003Description {
+        internal static string SEM0003Description {
             get {
-                return ResourceManager.GetString("AB0003Description", resourceCulture);
+                return ResourceManager.GetString("SEM0003Description", resourceCulture);
             }
         }
         
         /// <summary>
         ///   Looks up a localized string similar to Must use `using` keyword on lock handle.
         /// </summary>
-        internal static string AB0003MessageFormat {
+        internal static string SEM0003MessageFormat {
             get {
-                return ResourceManager.GetString("AB0003MessageFormat", resourceCulture);
+                return ResourceManager.GetString("SEM0003MessageFormat", resourceCulture);
             }
         }
         
         /// <summary>
         ///   Looks up a localized string similar to Must use `using` keyword on lock handle.
         /// </summary>
-        internal static string AB0003Title {
+        internal static string SEM0003Title {
             get {
-                return ResourceManager.GetString("AB0003Title", resourceCulture);
+                return ResourceManager.GetString("SEM0003Title", resourceCulture);
             }
         }
     }

@@ -4,9 +4,9 @@ namespace AsyncSemaphore.Analyzers;
 
 public class Rules
 {
-    public static DiagnosticDescriptor AwaitRule => Create("AB0001");
-    public static DiagnosticDescriptor VariableAssignmentRule => Create("AB0002");
-    public static DiagnosticDescriptor UsingKeywordRule => Create("AB0003");
+    public static DiagnosticDescriptor AwaitRule => Create("SEM0001");
+    public static DiagnosticDescriptor VariableAssignmentRule => Create("SEM0002");
+    public static DiagnosticDescriptor UsingKeywordRule => Create("SEM0003");
 
     public static DiagnosticDescriptor Create(string diagnosticId)
     {

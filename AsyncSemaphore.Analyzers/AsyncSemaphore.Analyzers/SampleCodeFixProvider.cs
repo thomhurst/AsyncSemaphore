@@ -50,9 +50,9 @@
 //         // Register a code action that will invoke the fix.
 //         context.RegisterCodeFix(
 //             CodeAction.Create(
-//                 title: string.Format(Resources.AB0001CodeFixTitle, SampleSyntaxAnalyzer.CompanyName, CommonName),
+//                 title: string.Format(Resources.SEM0001CodeFixTitle, SampleSyntaxAnalyzer.CompanyName, CommonName),
 //                 createChangedSolution: c => SanitizeCompanyNameAsync(context.Document, declaration, c),
-//                 equivalenceKey: nameof(Resources.AB0001CodeFixTitle)),
+//                 equivalenceKey: nameof(Resources.SEM0001CodeFixTitle)),
 //             diagnostic);
 //     }
 //

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
@@ -59,30 +60,30 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
             return;
         }
 
-        // Count validation is enough in most cases. Keep analyzers as simple as possible.
-        if (invocationSyntax.ArgumentList.Arguments.Count != 1)
-        {
-            return;
-        }
-
         var parentStatement = GetParentStatement(invocationSyntax);
 
-        if (!parentStatement.DescendantNodes().Any(x => x is AwaitExpressionSyntax))
+        var descendantNodes = parentStatement.DescendantNodes().ToList();
+        var descendantTokens = parentStatement.DescendantTokens().ToList();
+        
+        if (!descendantNodes.Any(x => x is AwaitExpressionSyntax))
         {
             context.ReportDiagnostic(Diagnostic.Create(Rules.AwaitRule,
                 parentStatement.GetLocation()));
+            return;
         }
         
-        if (!parentStatement.DescendantNodes().Any(x => x is VariableDesignationSyntax))
+        if (!descendantNodes.Any(x => x is VariableDeclarationSyntax))
         {
             context.ReportDiagnostic(Diagnostic.Create(Rules.VariableAssignmentRule,
                 parentStatement.GetLocation()));
+            return;
         }
         
-        if (!parentStatement.DescendantNodes().Any(x => x is UsingStatementSyntax))
+        if (!descendantTokens.Any(x => x.IsKind(SyntaxKind.UsingKeyword)))
         {
             context.ReportDiagnostic(Diagnostic.Create(Rules.UsingKeywordRule,
                 parentStatement.GetLocation()));
+            return;
         }
     }
 
