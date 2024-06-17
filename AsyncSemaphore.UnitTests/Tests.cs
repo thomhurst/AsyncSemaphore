@@ -6,9 +6,7 @@ public class Tests
     public async Task Can_Enter_Immediately()
     {
         var semaphore = new Semaphores.AsyncSemaphore(1);
-
-        using var handle = await semaphore.WaitAsync();
-
+        
         var time = await Measure(async () =>
         {
             using var @lock = await semaphore.WaitAsync();
