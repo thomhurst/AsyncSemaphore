@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
 
-namespace AsyncSemaphore.Analyzers;
+namespace Semaphores.Analyzers;
 
 /// <summary>
 /// A sample analyzer that reports invalid values being used for the 'speed' parameter of the 'SetSpeed' function.

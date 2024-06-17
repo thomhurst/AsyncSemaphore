@@ -1,5 +1,6 @@
 using NUnit.Framework;
-using Verifier = AsyncSemaphore.Analyzers.Tests.Verifiers.CSharpAnalyzerVerifier<AsyncSemaphore.Analyzers.AsyncSemaphoreAnalyzer>;
+using Semaphores.Analyzers;
+using Verifier = AsyncSemaphore.Analyzers.Tests.Verifiers.CSharpAnalyzerVerifier<Semaphores.Analyzers.AsyncSemaphoreAnalyzer>;
 
 namespace AsyncSemaphore.Analyzers.Tests;
 

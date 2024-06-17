@@ -1,6 +1,6 @@
 ﻿using Microsoft.CodeAnalysis;
 
-namespace AsyncSemaphore.Analyzers;
+namespace Semaphores.Analyzers;
 
 public class Rules
 {
