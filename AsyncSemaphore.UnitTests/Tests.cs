@@ -32,6 +32,32 @@ public class Tests
 
         await Assert.That(time).Is.GreaterThan(TimeSpan.FromMilliseconds(500 * (loopCount - 1)));
     }
+    
+    [DataSourceDrivenTest]
+    [EnumerableMethodDataSource(nameof(LoopCounts))]
+    public async Task WaitsForPreviousSemaphore_Even_When_Exception_Thrown(int loopCount)
+    {
+        var semaphore = new Semaphores.AsyncSemaphore(1);
+        
+        var time = await Measure(async () =>
+        {
+            for (var i = 0; i < loopCount; i++)
+            {
+                try
+                {
+                    using var @lock = await semaphore.WaitAsync();
+                    await DoSomething();
+                    throw new Exception();
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+        });
+
+        await Assert.That(time).Is.GreaterThan(TimeSpan.FromMilliseconds(500 * (loopCount - 1)));
+    }
 
     private Task DoSomething()
     {

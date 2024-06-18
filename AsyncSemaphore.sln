@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.Analyzers", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.Analyzers.Tests", "AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.Tests\AsyncSemaphore.Analyzers.Tests.csproj", "{9A4DA842-8896-485A-A6DC-9A56D2A46E89}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.Benchmark", "AsyncSemaphore.Benchmark\AsyncSemaphore.Benchmark.csproj", "{F8AC3ADD-4193-431D-853C-510CD061B1E5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -36,5 +38,9 @@ Global
 		{9A4DA842-8896-485A-A6DC-9A56D2A46E89}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9A4DA842-8896-485A-A6DC-9A56D2A46E89}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9A4DA842-8896-485A-A6DC-9A56D2A46E89}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F8AC3ADD-4193-431D-853C-510CD061B1E5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F8AC3ADD-4193-431D-853C-510CD061B1E5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F8AC3ADD-4193-431D-853C-510CD061B1E5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F8AC3ADD-4193-431D-853C-510CD061B1E5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

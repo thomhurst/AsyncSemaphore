@@ -2,27 +2,50 @@
 
 namespace Semaphores;
 
-public class AsyncSemaphore(int maxCount) : IDisposable
+public sealed class AsyncSemaphore : IAsyncSemaphore
 {
-    private readonly SemaphoreSlim _semaphoreSlim = new(maxCount, maxCount);
+    private readonly SemaphoreSlim _semaphoreSlim;
 
-    /// <inheritdoc cref="SemaphoreSlim.WaitAsync()"/>>
-    public Task<IDisposable> WaitAsync(CancellationToken cancellationToken = default)
+    private readonly AsyncSemaphoreLock _lock;
+
+    public AsyncSemaphore(int maxCount)
     {
-        return WaitAsync(TimeSpan.FromMilliseconds(int.MaxValue), cancellationToken);
+        _semaphoreSlim = new(maxCount, maxCount);
+        _lock = new AsyncSemaphoreLock(_semaphoreSlim);
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<IDisposable> WaitAsync()
+    {
+        await _semaphoreSlim.WaitAsync();
+        return _lock;
     }
     
-    /// <inheritdoc cref="SemaphoreSlim.WaitAsync()"/>>
-    public async Task<IDisposable> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public async ValueTask<IDisposable> WaitAsync(TimeSpan timeout)
+    {
+        await _semaphoreSlim.WaitAsync(timeout);
+        return _lock;
+    }
+    
+    /// <inheritdoc />
+    public async ValueTask<IDisposable> WaitAsync(CancellationToken cancellationToken)
+    {
+        await _semaphoreSlim.WaitAsync(cancellationToken);
+        return _lock;
+    }
+    
+    /// <inheritdoc />
+    public async ValueTask<IDisposable> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
         await _semaphoreSlim.WaitAsync(timeout, cancellationToken);
-        return new AsyncSemaphoreLock(_semaphoreSlim);
+        return _lock;
     }
 
-    /// <inheritdoc cref="SemaphoreSlim.CurrentCount"/>>
+    /// <inheritdoc />
     public int CurrentCount => _semaphoreSlim.CurrentCount;
 
-    /// <inheritdoc cref="IDisposable.Dispose"/>>
+    /// <inheritdoc />
     public void Dispose()
     {
         _semaphoreSlim.Dispose();
