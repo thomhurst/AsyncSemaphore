@@ -4,6 +4,7 @@
 
 Rule ID | Category | Severity | Notes                                            
 --------|----------|----------|--------------------------------------------------
-SEM0001  | Usage    | Warning  | Type names should not contain the company name.  
-SEM0002  | Usage    | Warning  | The speed must be lower than the Speed of Light. 
-SEM0003  | Usage    | Warning  | The speed must be lower than the Speed of Light. 
+SEM0001  | Usage    | Warning  | WaitAsync should be awaited.  
+SEM0002  | Usage    | Warning  | The lock should be assigned to a variable. 
+SEM0003  | Usage    | Warning  | The using keyword should be used to automatically release the lock. 
+SEM0004  | Usage    | Warning  | The releaser's Dispose method should not be called explicitly. 
