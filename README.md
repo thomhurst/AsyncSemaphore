@@ -4,7 +4,10 @@ A simple wrapper around a `SemaphoreSlim` that supports automatic releasing of a
 
 No more `try/finally` code blocks!
 
-Usage:
+## Install
+`dotnet add package AsyncSemaphore`
+
+## Usage
 
 ```csharp
 private readonly AsyncSemaphore _asyncSemaphore = new AsyncSemaphore(1);
