@@ -7,10 +7,6 @@ using Microsoft.CodeAnalysis.Operations;
 
 namespace Semaphores.Analyzers;
 
-/// <summary>
-/// A sample analyzer that reports invalid values being used for the 'speed' parameter of the 'SetSpeed' function.
-/// To make sure that we analyze the method of the specific class, we use semantic analysis instead of the syntax tree, so this analyzer will not work if the project is not compilable.
-/// </summary>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
 {
@@ -22,16 +18,9 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
 
     public override void Initialize(AnalysisContext context)
     {
-        // You must call this method to avoid analyzing generated code.
         context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
-
-        // You must call this method to enable the Concurrent Execution.
         context.EnableConcurrentExecution();
-
-        // Subscribe to semantic (compile time) action invocation, e.g. method invocation.
         context.RegisterOperationAction(AnalyzeOperation, OperationKind.Invocation);
-
-        // Check other 'context.Register...' methods that might be helpful for your purposes.
     }
 
     /// <summary>
@@ -40,9 +29,6 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
     /// <param name="context">Operation context.</param>
     private void AnalyzeOperation(OperationAnalysisContext context)
     {
-        // The Roslyn architecture is based on inheritance.
-        // To get the required metadata, we should match the 'Operation' and 'Syntax' objects to the particular types,
-        // which are based on the 'OperationKind' parameter specified in the 'Register...' method.
         if (context.Operation is not IInvocationOperation invocationOperation ||
             context.Operation.Syntax is not InvocationExpressionSyntax invocationSyntax)
         {
@@ -51,7 +37,6 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
 
         var methodSymbol = invocationOperation.TargetMethod;
 
-        // Check whether the method name is 'SetSpeed' and it is a member of the 'Spaceship' class.
         if (methodSymbol.MethodKind != MethodKind.Ordinary ||
             methodSymbol.ReceiverType?.Name != CommonApiClassName ||
             methodSymbol.Name != CommonApiMethodName

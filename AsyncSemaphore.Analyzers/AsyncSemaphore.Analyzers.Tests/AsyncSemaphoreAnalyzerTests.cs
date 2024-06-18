@@ -4,7 +4,7 @@ using Verifier = AsyncSemaphore.Analyzers.Tests.Verifiers.CSharpAnalyzerVerifier
 
 namespace AsyncSemaphore.Analyzers.Tests;
 
-public class SampleSemanticAnalyzerTests
+public class AsyncSemaphoreAnalyzerTests
 {
     [Test]
     public async Task Must_Await_Analyzer()

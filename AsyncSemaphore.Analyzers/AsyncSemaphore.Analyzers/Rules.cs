@@ -7,7 +7,8 @@ public class Rules
     public static DiagnosticDescriptor AwaitRule => Create("SEM0001");
     public static DiagnosticDescriptor VariableAssignmentRule => Create("SEM0002");
     public static DiagnosticDescriptor UsingKeywordRule => Create("SEM0003");
-
+    public static DiagnosticDescriptor DoNotDisposeExplicitlyRule => Create("SEM0004");
+    
     public static DiagnosticDescriptor Create(string diagnosticId)
     {
         var messageFormat = new LocalizableResourceString(diagnosticId + "MessageFormat",
