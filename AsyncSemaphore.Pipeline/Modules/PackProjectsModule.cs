@@ -47,6 +47,7 @@ public class PackProjectsModule : Module<List<CommandResult>>
 
         if (path.Contains("Tests", StringComparison.OrdinalIgnoreCase)
             || path.Contains("Pipeline", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("Benchmark", StringComparison.OrdinalIgnoreCase)
             || path.Contains("Example", StringComparison.OrdinalIgnoreCase))
         {
             return false;
