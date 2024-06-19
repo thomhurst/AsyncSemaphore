@@ -56,7 +56,13 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
                 parentStatement.GetLocation()));
             return;
         }
-        
+
+        if (descendantTokens.Any(x => x.IsKind(SyntaxKind.UsingKeyword)))
+        {
+            // We're correct disposing it on scope exit 
+            return;
+        }
+
         if (!descendantNodes.Any(x => x is VariableDeclarationSyntax))
         {
             context.ReportDiagnostic(Diagnostic.Create(Rules.VariableAssignmentRule,
@@ -64,12 +70,8 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
             return;
         }
         
-        if (!descendantTokens.Any(x => x.IsKind(SyntaxKind.UsingKeyword)))
-        {
-            context.ReportDiagnostic(Diagnostic.Create(Rules.UsingKeywordRule,
+        context.ReportDiagnostic(Diagnostic.Create(Rules.UsingKeywordRule,
                 parentStatement.GetLocation()));
-            return;
-        }
     }
 
     private static SyntaxNode GetParentStatement(InvocationExpressionSyntax invocationSyntax)

@@ -90,4 +90,26 @@ public class Program
         
         await Verifier.VerifyAnalyzerAsync(text);
     }
+    
+    [Test]
+    public async Task No_Error_Flagged_When_Scoped()
+    {
+        const string text = @"
+using System.Threading.Tasks;
+using Semaphores;
+
+public class Program
+{
+    public async Task Main()
+    {
+        var semaphore = new AsyncSemaphore(1);
+        using (await semaphore.WaitAsync())
+        {
+        }
+    }
+}
+";
+        
+        await Verifier.VerifyAnalyzerAsync(text);
+    }
 }
