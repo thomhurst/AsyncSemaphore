@@ -52,6 +52,6 @@ BenchmarkDotNet v0.13.12, Windows 11 (10.0.22621.3593/22H2/2022Update/SunValley2
 
 | Method                              | Mean     | Error    | StdDev   | Allocated |
 |------------------------------------ |---------:|---------:|---------:|----------:|
-| Raw_Semaphore_Slim                  | 39.65 ns | 0.777 ns | 1.402 ns |         - |
-| AsyncSemaphore_With_Inherited_Scope | 46.23 ns | 0.464 ns | 0.411 ns |         - |
-| AsyncSemaphore_With_Braced_Scope    | 44.91 ns | 0.500 ns | 0.444 ns |         - |
+| Raw_Semaphore_Slim                  | 38.89 ns | 0.622 ns | 0.519 ns |         - |
+| AsyncSemaphore_With_Inherited_Scope | 51.36 ns | 0.466 ns | 0.413 ns |         - |
+| AsyncSemaphore_With_Braced_Scope    | 51.04 ns | 0.274 ns | 0.243 ns |         - |
