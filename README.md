@@ -1,8 +1,10 @@
 # AsyncSemaphore
 
-A simple wrapper around a `SemaphoreSlim` that supports automatic releasing of a lock on scope exit with the `using` keyword.
-
-No more `try/finally` code blocks!
+A simple wrapper around a `SemaphoreSlim` featuring:
+- Automatic releasing without try/finally blocks by utilising the IDisposable `using` pattern
+- Guarantee that release can only be called once per `WaitAsync` call
+- Analyzers to help you implement the desired pattern
+- An `IAsyncSemaphore` interface for if you need to mock
 
 ## Install
 `dotnet add package AsyncSemaphore`
