@@ -1,8 +1,8 @@
 namespace Semaphores;
 
-public sealed class AsyncSemaphoreReleaser : IDisposable
+public struct AsyncSemaphoreReleaser : IDisposable
 {
-    private readonly SemaphoreSlim _semaphoreSlim;
+    private SemaphoreSlim? _semaphoreSlim;
 
     internal AsyncSemaphoreReleaser(SemaphoreSlim semaphoreSlim)
     {
@@ -11,6 +11,6 @@ public sealed class AsyncSemaphoreReleaser : IDisposable
 
     public void Dispose()
     {
-        _semaphoreSlim.Release();
+        Interlocked.Exchange(ref _semaphoreSlim, null)?.Release();
     }
 }

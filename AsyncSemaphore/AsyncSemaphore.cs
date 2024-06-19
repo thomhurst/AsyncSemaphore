@@ -5,41 +5,38 @@ namespace Semaphores;
 public sealed class AsyncSemaphore : IAsyncSemaphore
 {
     private readonly SemaphoreSlim _semaphoreSlim;
-
-    private readonly AsyncSemaphoreReleaser _releaser;
-
+    
     public AsyncSemaphore(int maxCount)
     {
         _semaphoreSlim = new(maxCount, maxCount);
-        _releaser = new AsyncSemaphoreReleaser(_semaphoreSlim);
     }
 
     /// <inheritdoc />
     public async ValueTask<AsyncSemaphoreReleaser> WaitAsync()
     {
         await _semaphoreSlim.WaitAsync();
-        return _releaser;
+        return new AsyncSemaphoreReleaser(_semaphoreSlim);
     }
     
     /// <inheritdoc />
     public async ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout)
     {
         await _semaphoreSlim.WaitAsync(timeout);
-        return _releaser;
+        return new AsyncSemaphoreReleaser(_semaphoreSlim);
     }
     
     /// <inheritdoc />
     public async ValueTask<AsyncSemaphoreReleaser> WaitAsync(CancellationToken cancellationToken)
     {
         await _semaphoreSlim.WaitAsync(cancellationToken);
-        return _releaser;
+        return new AsyncSemaphoreReleaser(_semaphoreSlim);
     }
     
     /// <inheritdoc />
     public async ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
         await _semaphoreSlim.WaitAsync(timeout, cancellationToken);
-        return _releaser;
+        return new AsyncSemaphoreReleaser(_semaphoreSlim);
     }
 
     /// <inheritdoc />
