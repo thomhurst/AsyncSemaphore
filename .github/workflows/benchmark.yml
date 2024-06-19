@@ -8,8 +8,7 @@ on:
     inputs:
 
 jobs:
-  modularpipeline:
-    environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Pull Requests' }}
+  benchmark:
     runs-on: ubuntu-latest
 
     steps:
