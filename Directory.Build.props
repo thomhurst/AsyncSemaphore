@@ -23,7 +23,7 @@
         <StyleCopTreatErrorsAsWarnings>false</StyleCopTreatErrorsAsWarnings>
         <AnalysisLevel>preview</AnalysisLevel>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-        <WarningsNotAsErrors>NU5104</WarningsNotAsErrors>
+        <WarningsNotAsErrors>NU5104;CS0436</WarningsNotAsErrors>
     </PropertyGroup>
     
     <ItemGroup>
