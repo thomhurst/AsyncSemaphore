@@ -15,7 +15,7 @@ public class Tests
         await Assert.That(time).Is.LessThan(TimeSpan.FromMilliseconds(100));
     }
     
-    [DataSourceDrivenTest]
+    [Test]
     [EnumerableMethodDataSource(nameof(LoopCounts))]
     public async Task WaitsForPreviousSemaphore(int loopCount)
     {
@@ -33,7 +33,7 @@ public class Tests
         await Assert.That(time).Is.GreaterThan(TimeSpan.FromMilliseconds(500 * (loopCount - 1)));
     }
     
-    [DataSourceDrivenTest]
+    [Test]
     [EnumerableMethodDataSource(nameof(LoopCounts))]
     public async Task WaitsForPreviousSemaphore_Even_When_Exception_Thrown(int loopCount)
     {
