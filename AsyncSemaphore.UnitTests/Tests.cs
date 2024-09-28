@@ -12,11 +12,11 @@ public class Tests
             using var @lock = await semaphore.WaitAsync();
         });
         
-        await Assert.That(time).Is.LessThan(TimeSpan.FromMilliseconds(100));
+        await Assert.That(time).IsLessThan(TimeSpan.FromMilliseconds(100));
     }
     
     [Test]
-    [EnumerableMethodDataSource(nameof(LoopCounts))]
+    [MethodDataSource(nameof(LoopCounts))]
     public async Task WaitsForPreviousSemaphore(int loopCount)
     {
         var semaphore = new Semaphores.AsyncSemaphore(1);
@@ -30,11 +30,11 @@ public class Tests
             }
         });
 
-        await Assert.That(time).Is.GreaterThan(TimeSpan.FromMilliseconds(500 * (loopCount - 1)));
+        await Assert.That(time).IsGreaterThan(TimeSpan.FromMilliseconds(500 * (loopCount - 1)));
     }
     
     [Test]
-    [EnumerableMethodDataSource(nameof(LoopCounts))]
+    [MethodDataSource(nameof(LoopCounts))]
     public async Task WaitsForPreviousSemaphore_Even_When_Exception_Thrown(int loopCount)
     {
         var semaphore = new Semaphores.AsyncSemaphore(1);
@@ -56,7 +56,7 @@ public class Tests
             }
         });
 
-        await Assert.That(time).Is.GreaterThan(TimeSpan.FromMilliseconds(500 * (loopCount - 1)));
+        await Assert.That(time).IsGreaterThan(TimeSpan.FromMilliseconds(500 * (loopCount - 1)));
     }
 
     private Task DoSomething()
