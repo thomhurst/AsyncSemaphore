@@ -2,14 +2,13 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Testing;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Testing;
-using Microsoft.CodeAnalysis.Testing.Verifiers;
 
 namespace AsyncSemaphore.Analyzers.Tests.Verifiers;
 
 public static partial class CSharpAnalyzerVerifier<TAnalyzer>
     where TAnalyzer : DiagnosticAnalyzer, new()
 {
-    public class Test : CSharpAnalyzerTest<TAnalyzer, NUnitVerifier>
+    public class Test : CSharpAnalyzerTest<TAnalyzer, DefaultVerifier>
     {
         public Test()
         {
@@ -30,9 +29,7 @@ public static partial class CSharpAnalyzerVerifier<TAnalyzer>
                     return solution;
                 }
 
-                var parseOptions = project.ParseOptions as CSharpParseOptions;
-
-                if (parseOptions is null)
+                if (project.ParseOptions is not CSharpParseOptions parseOptions)
                 {
                     return solution;
                 }
