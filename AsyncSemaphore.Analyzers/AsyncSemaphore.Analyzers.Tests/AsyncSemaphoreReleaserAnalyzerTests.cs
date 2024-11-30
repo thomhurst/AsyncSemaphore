@@ -1,4 +1,3 @@
-using NUnit.Framework;
 using Semaphores.Analyzers;
 using Verifier = AsyncSemaphore.Analyzers.Tests.Verifiers.CSharpAnalyzerVerifier<Semaphores.Analyzers.AsyncSemaphoreReleaserAnalyzer>;
 
