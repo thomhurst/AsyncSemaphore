@@ -14,28 +14,27 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     /// <inheritdoc />
     public async ValueTask<AsyncSemaphoreReleaser> WaitAsync()
     {
-        await _semaphoreSlim.WaitAsync();
-        return new AsyncSemaphoreReleaser(_semaphoreSlim);
+        return await WaitAsync(Timeout.InfiniteTimeSpan, CancellationToken.None).ConfigureAwait(false);
     }
     
     /// <inheritdoc />
     public async ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout)
     {
-        await _semaphoreSlim.WaitAsync(timeout);
-        return new AsyncSemaphoreReleaser(_semaphoreSlim);
+        return await WaitAsync(timeout, CancellationToken.None).ConfigureAwait(false);
     }
     
     /// <inheritdoc />
     public async ValueTask<AsyncSemaphoreReleaser> WaitAsync(CancellationToken cancellationToken)
     {
-        await _semaphoreSlim.WaitAsync(cancellationToken);
-        return new AsyncSemaphoreReleaser(_semaphoreSlim);
+        return await WaitAsync(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
     }
     
     /// <inheritdoc />
     public async ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        await _semaphoreSlim.WaitAsync(timeout, cancellationToken);
+        bool result = await _semaphoreSlim.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+        if (!result)
+            throw new OperationCanceledException();
         return new AsyncSemaphoreReleaser(_semaphoreSlim);
     }
 
