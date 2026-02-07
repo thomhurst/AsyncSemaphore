@@ -15,6 +15,9 @@ on:
         type: boolean
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   modularpipeline:
     environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Pull Requests' }}
