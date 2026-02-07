@@ -30,6 +30,7 @@ builder.Services.AddModule<RunUnitTestsModule>();
 builder.Services.AddModule<NugetVersionGeneratorModule>();
 builder.Services.AddModule<PackProjectsModule>();
 builder.Services.AddModule<PackageFilesRemovalModule>();
+builder.Services.AddModule<PushVersionTagModule>();
 builder.Services.AddModule<PackagePathsModule>();
 
 await builder.ExecutePipelineAsync();
