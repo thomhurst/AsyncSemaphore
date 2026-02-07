@@ -44,16 +44,16 @@ public async Task MyMethod()
 Benchmarks and allocations can be seen below.
 
 ```
-BenchmarkDotNet v0.13.12, Windows 11 (10.0.22621.3593/22H2/2022Update/SunValley2)
-11th Gen Intel Core i7-1185G7 3.00GHz, 1 CPU, 8 logical and 4 physical cores
-.NET SDK 8.0.106
-  [Host]     : .NET 8.0.6 (8.0.624.26715), X64 RyuJIT AVX-512F+CD+BW+DQ+VL+VBMI
-  DefaultJob : .NET 8.0.6 (8.0.624.26715), X64 RyuJIT AVX-512F+CD+BW+DQ+VL+VBMI
+BenchmarkDotNet v0.15.8, Linux Ubuntu 25.10 (Questing Quokka)
+12th Gen Intel Core i7-12700K 3.60GHz, 1 CPU, 20 logical and 12 physical cores
+.NET SDK 9.0.112
+  [Host]     : .NET 9.0.11 (9.0.11, 9.0.1125.51716), X64 RyuJIT x86-64-v3
+  DefaultJob : .NET 9.0.11 (9.0.11, 9.0.1125.51716), X64 RyuJIT x86-64-v3
 ```
 
 
 | Method                              | Mean     | Error    | StdDev   | Allocated |
 |------------------------------------ |---------:|---------:|---------:|----------:|
-| Raw_Semaphore_Slim                  | 38.89 ns | 0.622 ns | 0.519 ns |         - |
-| AsyncSemaphore_With_Inherited_Scope | 51.36 ns | 0.466 ns | 0.413 ns |         - |
-| AsyncSemaphore_With_Braced_Scope    | 51.04 ns | 0.274 ns | 0.243 ns |         - |
+| Raw_Semaphore_Slim                  | 31.07 ns | 0.056 ns | 0.044 ns |         - |
+| AsyncSemaphore_With_Inherited_Scope | 37.25 ns | 0.255 ns | 0.238 ns |         - |
+| AsyncSemaphore_With_Braced_Scope    | 37.07 ns | 0.373 ns | 0.312 ns |         - |
