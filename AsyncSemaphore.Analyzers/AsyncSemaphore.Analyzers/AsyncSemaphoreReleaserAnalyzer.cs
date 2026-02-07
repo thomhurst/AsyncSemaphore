@@ -7,14 +7,14 @@ using Microsoft.CodeAnalysis.Operations;
 namespace Semaphores.Analyzers;
 
 /// <summary>
-/// A sample analyzer that reports invalid values being used for the 'speed' parameter of the 'SetSpeed' function.
-/// To make sure that we analyze the method of the specific class, we use semantic analysis instead of the syntax tree, so this analyzer will not work if the project is not compilable.
+/// Reports SEM0004 when Dispose is called explicitly on an AsyncSemaphoreReleaser instead of using the `using` keyword.
 /// </summary>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class AsyncSemaphoreReleaserAnalyzer : DiagnosticAnalyzer
 {
     private const string CommonApiClassName = "AsyncSemaphoreReleaser";
     private const string CommonApiMethodName = "Dispose";
+    private const string CommonNamespace = "Semaphores";
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
         ImmutableArray.Create(Rules.DoNotDisposeExplicitlyRule);
@@ -41,13 +41,19 @@ public class AsyncSemaphoreReleaserAnalyzer : DiagnosticAnalyzer
         var methodSymbol = invocationOperation.TargetMethod;
 
         if (methodSymbol.MethodKind != MethodKind.Ordinary ||
-            methodSymbol.ReceiverType?.Name != CommonApiClassName ||
-            methodSymbol.Name != CommonApiMethodName
-           )
+            methodSymbol.Name != CommonApiMethodName)
         {
             return;
         }
-        
+
+        var receiverType = methodSymbol.ReceiverType;
+
+        if (receiverType?.Name != CommonApiClassName ||
+            receiverType.ContainingNamespace?.Name != CommonNamespace)
+        {
+            return;
+        }
+
         context.ReportDiagnostic(Diagnostic.Create(Rules.DoNotDisposeExplicitlyRule, invocationSyntax.GetLocation()));
     }
 }

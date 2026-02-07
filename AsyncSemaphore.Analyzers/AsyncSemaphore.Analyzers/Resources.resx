@@ -48,4 +48,13 @@
     <data name="SEM0003Title" xml:space="preserve">
         <value>Must use `using` keyword on lock handle</value>
     </data>
+    <data name="SEM0004Description" xml:space="preserve">
+        <value>Do not call Dispose explicitly on AsyncSemaphoreReleaser; use the `using` keyword instead.</value>
+    </data>
+    <data name="SEM0004MessageFormat" xml:space="preserve">
+        <value>Do not call Dispose explicitly on AsyncSemaphoreReleaser</value>
+    </data>
+    <data name="SEM0004Title" xml:space="preserve">
+        <value>Do not call Dispose explicitly on AsyncSemaphoreReleaser</value>
+    </data>
 </root>
