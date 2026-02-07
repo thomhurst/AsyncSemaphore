@@ -1,6 +1,7 @@
 using EnumerableAsyncProcessor.Extensions;
 using Microsoft.Extensions.Logging;
 using ModularPipelines.Attributes;
+using ModularPipelines.Configuration;
 using ModularPipelines.Context;
 using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
@@ -14,26 +15,27 @@ namespace AsyncSemaphore.Pipeline.Modules.LocalMachine;
 [DependsOn<CreateLocalNugetFolderModule>]
 public class UploadPackagesToLocalNuGetModule : Module<CommandResult[]>
 {
-    protected override async Task OnBeforeExecute(IPipelineContext context)
-    {
-        var packagePaths = await GetModule<PackagePathsModule>();
-        foreach (var packagePath in packagePaths.Value!)
+    protected override ModuleConfiguration Configure() => ModuleConfiguration.Create()
+        .WithBeforeExecute(async context =>
         {
-            context.Logger.LogInformation("[Local Directory] Uploading {File}", packagePath);
-        }
-
-        await base.OnBeforeExecute(context);
-    }
-
-    protected override async Task<CommandResult[]?> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
-    {
-        var localRepoLocation = await GetModule<CreateLocalNugetFolderModule>();
-        var packagePaths = await GetModule<PackagePathsModule>();
-        return await packagePaths.Value!.SelectAsync(async file => await context.DotNet()
-            .Nuget
-            .Push(new DotNetNugetPushOptions(file)
+            var packagePaths = await context.GetModule<PackagePathsModule>();
+            foreach (var packagePath in packagePaths.ValueOrDefault!)
             {
-                Source = localRepoLocation.Value!,
-            }, cancellationToken), cancellationToken: cancellationToken).ProcessOneAtATime();
+                context.Logger.LogInformation("[Local Directory] Uploading {File}", packagePath);
+            }
+        })
+        .Build();
+
+    protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    {
+        var localRepoLocation = await context.GetModule<CreateLocalNugetFolderModule>();
+        var packagePaths = await context.GetModule<PackagePathsModule>();
+        return await packagePaths.ValueOrDefault!.SelectAsync(async file => await context.DotNet()
+            .Nuget
+            .Push(new DotNetNugetPushOptions
+            {
+                Path = file,
+                Source = localRepoLocation.ValueOrDefault!,
+            }), cancellationToken: cancellationToken).ProcessOneAtATime();
     }
 }
