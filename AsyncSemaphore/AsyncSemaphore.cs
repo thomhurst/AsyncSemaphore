@@ -21,7 +21,13 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     /// <inheritdoc />
     public async ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout)
     {
-        await _semaphoreSlim.WaitAsync(timeout);
+        var acquired = await _semaphoreSlim.WaitAsync(timeout);
+
+        if (!acquired)
+        {
+            throw new TimeoutException();
+        }
+
         return new AsyncSemaphoreReleaser(_semaphoreSlim);
     }
     
@@ -35,7 +41,13 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     /// <inheritdoc />
     public async ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        await _semaphoreSlim.WaitAsync(timeout, cancellationToken);
+        var acquired = await _semaphoreSlim.WaitAsync(timeout, cancellationToken);
+
+        if (!acquired)
+        {
+            throw new TimeoutException();
+        }
+
         return new AsyncSemaphoreReleaser(_semaphoreSlim);
     }
 

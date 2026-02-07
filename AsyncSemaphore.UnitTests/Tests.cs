@@ -59,6 +59,64 @@ public class Tests
         await Assert.That(time).IsGreaterThan(TimeSpan.FromMilliseconds(500 * (loopCount - 1)));
     }
 
+    [Test]
+    public async Task Timeout_Throws_TimeoutException()
+    {
+        var semaphore = new Semaphores.AsyncSemaphore(1);
+
+        // Acquire the only slot
+        using var @lock = await semaphore.WaitAsync();
+
+        // A second wait with a short timeout should throw
+        await Assert.That(async () => await semaphore.WaitAsync(TimeSpan.FromMilliseconds(50)))
+            .ThrowsExactly<TimeoutException>();
+    }
+
+    [Test]
+    public async Task Timeout_Does_Not_Corrupt_Semaphore_Count()
+    {
+        var semaphore = new Semaphores.AsyncSemaphore(1);
+
+        // Acquire the only slot
+        using (await semaphore.WaitAsync())
+        {
+            // Timeout while held
+            await Assert.That(async () => await semaphore.WaitAsync(TimeSpan.FromMilliseconds(50)))
+                .ThrowsExactly<TimeoutException>();
+        }
+
+        // Semaphore should be released and available again
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(1);
+
+        // Should be able to acquire again immediately
+        using var @lock = await semaphore.WaitAsync();
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Timeout_With_CancellationToken_Throws_TimeoutException()
+    {
+        var semaphore = new Semaphores.AsyncSemaphore(1);
+
+        using var @lock = await semaphore.WaitAsync();
+
+        await Assert.That(async () => await semaphore.WaitAsync(TimeSpan.FromMilliseconds(50), CancellationToken.None))
+            .ThrowsExactly<TimeoutException>();
+    }
+
+    [Test]
+    public async Task Cancellation_Throws_OperationCanceledException()
+    {
+        var semaphore = new Semaphores.AsyncSemaphore(1);
+
+        using var @lock = await semaphore.WaitAsync();
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        await Assert.That(async () => await semaphore.WaitAsync(cts.Token))
+            .ThrowsExactly<OperationCanceledException>();
+    }
+
     private Task DoSomething()
     {
         return Task.Delay(500);
