@@ -25,7 +25,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
         if (!acquired)
         {
-            throw new TimeoutException();
+            throw new TimeoutException($"The semaphore wait exceeded the timeout of {timeout}.");
         }
 
         return new AsyncSemaphoreReleaser(_semaphoreSlim);
@@ -45,7 +45,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
         if (!acquired)
         {
-            throw new TimeoutException();
+            throw new TimeoutException($"The semaphore wait exceeded the timeout of {timeout}.");
         }
 
         return new AsyncSemaphoreReleaser(_semaphoreSlim);
