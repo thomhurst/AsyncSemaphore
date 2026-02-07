@@ -3,5 +3,8 @@
     "version": "9.0.310",
     "rollForward": "latestMajor",
     "allowPrerelease": false
+  },
+  "test": {
+    "runner": "Microsoft.Testing.Platform"
   }
 }
