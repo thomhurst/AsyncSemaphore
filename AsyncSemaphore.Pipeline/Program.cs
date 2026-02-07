@@ -1,37 +1,35 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using ModularPipelines;
 using ModularPipelines.Extensions;
-using ModularPipelines.Host;
 using AsyncSemaphore.Pipeline.Modules;
 using AsyncSemaphore.Pipeline.Modules.LocalMachine;
 using AsyncSemaphore.Pipeline.Settings;
 
-await PipelineHostBuilder.Create()
-    .ConfigureAppConfiguration((_, builder) =>
-    {
-        builder.AddJsonFile("appsettings.json")
-            .AddUserSecrets<Program>()
-            .AddEnvironmentVariables();
-    })
-    .ConfigureServices((context, collection) =>
-    {
-        collection.Configure<NuGetSettings>(context.Configuration.GetSection("NuGet"));
+var builder = Pipeline.CreateBuilder(args);
 
-        if (context.HostingEnvironment.IsDevelopment())
-        {
-            collection.AddModule<CreateLocalNugetFolderModule>()
-                .AddModule<AddLocalNugetSourceModule>()
-                .AddModule<UploadPackagesToLocalNuGetModule>();
-        }
-        else
-        {
-            collection.AddModule<UploadPackagesToNugetModule>();
-        }
-    })
-    .AddModule<RunUnitTestsModule>()
-    .AddModule<NugetVersionGeneratorModule>()
-    .AddModule<PackProjectsModule>()
-    .AddModule<PackageFilesRemovalModule>()
-    .AddModule<PackagePathsModule>()
-    .ExecutePipelineAsync();
+builder.Configuration.AddJsonFile("appsettings.json")
+    .AddUserSecrets<Program>()
+    .AddEnvironmentVariables();
+
+builder.Services.Configure<NuGetSettings>(builder.Configuration.GetSection("NuGet"));
+
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddModule<CreateLocalNugetFolderModule>()
+        .AddModule<AddLocalNugetSourceModule>()
+        .AddModule<UploadPackagesToLocalNuGetModule>();
+}
+else
+{
+    builder.Services.AddModule<UploadPackagesToNugetModule>();
+}
+
+builder.Services.AddModule<RunUnitTestsModule>();
+builder.Services.AddModule<NugetVersionGeneratorModule>();
+builder.Services.AddModule<PackProjectsModule>();
+builder.Services.AddModule<PackageFilesRemovalModule>();
+builder.Services.AddModule<PackagePathsModule>();
+
+await builder.ExecutePipelineAsync();

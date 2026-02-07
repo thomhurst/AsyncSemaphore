@@ -10,13 +10,14 @@ namespace AsyncSemaphore.Pipeline.Modules.LocalMachine;
 [DependsOn<PackagePathsModule>]
 public class CreateLocalNugetFolderModule : Module<Folder>
 {
-    protected override async Task<Folder?> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override async Task<Folder?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
-        var localNugetRepositoryFolder = context.FileSystem.GetFolder(Environment.SpecialFolder.ApplicationData)
+        var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var localNugetRepositoryFolder = new ModularPipelines.FileSystem.Folder(appDataPath)
             .GetFolder("ModularPipelines")
             .GetFolder("LocalNuget")
             .Create();
-        
+
         await Task.Yield();
 
         context.Logger.LogInformation("Local NuGet Repository Path: {Path}", localNugetRepositoryFolder.Path);

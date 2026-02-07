@@ -9,7 +9,7 @@ namespace AsyncSemaphore.Pipeline.Modules;
 
 public class RunUnitTestsModule : Module<List<CommandResult>>
 {
-    protected override async Task<List<CommandResult>?> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override async Task<List<CommandResult>?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         var results = new List<CommandResult>();
 
@@ -20,8 +20,8 @@ public class RunUnitTestsModule : Module<List<CommandResult>>
         {
             results.Add(await context.DotNet().Test(new DotNetTestOptions
             {
-                ProjectSolutionDirectoryDllExe = unitTestProjectFile
-            }, cancellationToken));
+                Project = unitTestProjectFile
+            }));
         }
 
         return results;

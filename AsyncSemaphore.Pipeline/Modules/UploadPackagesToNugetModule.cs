@@ -3,6 +3,7 @@ using EnumerableAsyncProcessor.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ModularPipelines.Attributes;
+using ModularPipelines.Configuration;
 using ModularPipelines.Context;
 using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
@@ -23,39 +24,38 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
         _options = options;
     }
 
-    protected override async Task OnBeforeExecute(IPipelineContext context)
-    {
-        var packagePaths = await GetModule<PackagePathsModule>();
-
-        foreach (var packagePath in packagePaths.Value!)
+    protected override ModuleConfiguration Configure() => ModuleConfiguration.Create()
+        .WithSkipWhen(async context =>
         {
-            context.Logger.LogInformation("Uploading {File}", packagePath);
-        }
+            var gitVersionInfo = await context.Git().Versioning.GetGitVersioningInformation();
 
-        await base.OnBeforeExecute(context);
-    }
+            if (gitVersionInfo.BranchName != "main")
+            {
+                return true;
+            }
 
-    protected override async Task<SkipDecision> ShouldSkip(IPipelineContext context)
-    {
-        var gitVersionInfo = await context.Git().Versioning.GetGitVersioningInformation();
+            var publishPackages =
+                System.Environment.GetEnvironmentVariable("PUBLISH_PACKAGES")!;
 
-        if (gitVersionInfo.BranchName != "main")
+            if (!bool.TryParse(publishPackages, out var shouldPublishPackages) || !shouldPublishPackages)
+            {
+                return true;
+            }
+
+            return false;
+        })
+        .WithBeforeExecute(async context =>
         {
-            return true;
-        }
-        
-        var publishPackages =
-            context.Environment.EnvironmentVariables.GetEnvironmentVariable("PUBLISH_PACKAGES")!;
+            var packagePaths = await context.GetModule<PackagePathsModule>();
 
-        if (!bool.TryParse(publishPackages, out var shouldPublishPackages) || !shouldPublishPackages)
-        {
-            return true;
-        }
+            foreach (var packagePath in packagePaths.ValueOrDefault!)
+            {
+                context.Logger.LogInformation("Uploading {File}", packagePath);
+            }
+        })
+        .Build();
 
-        return false;
-    }
-
-    protected override async Task<CommandResult[]?> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(_options.Value.ApiKey);
 
@@ -63,17 +63,18 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
 
         if (gitVersionInformation.BranchName != "main")
         {
-            return await NothingAsync();
+            return null;
         }
 
-        var packagePaths = await GetModule<PackagePathsModule>();
+        var packagePaths = await context.GetModule<PackagePathsModule>();
 
-        return await packagePaths.Value!.SelectAsync(async file => await context.DotNet()
+        return await packagePaths.ValueOrDefault!.SelectAsync(async file => await context.DotNet()
             .Nuget
-            .Push(new DotNetNugetPushOptions(file)
+            .Push(new DotNetNugetPushOptions
             {
+                Path = file,
                 Source = "https://api.nuget.org/v3/index.json",
                 ApiKey = _options.Value.ApiKey!
-            }, cancellationToken), cancellationToken: cancellationToken).ProcessOneAtATime();
+            }), cancellationToken: cancellationToken).ProcessOneAtATime();
     }
 }
