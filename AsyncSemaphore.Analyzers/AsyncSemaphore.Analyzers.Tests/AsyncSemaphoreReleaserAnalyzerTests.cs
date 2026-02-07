@@ -22,9 +22,38 @@ public class Program
     }
 }
 ";
-        
+
         var expected = Verifier.Diagnostic(Rules.DoNotDisposeExplicitlyRule).WithLocation(0);
-        
+
         await Verifier.VerifyAnalyzerAsync(text, expected);
+    }
+
+    [Test]
+    public async Task No_Warning_For_Unrelated_Type_Named_AsyncSemaphoreReleaser()
+    {
+        const string text = @"
+using System;
+using System.Threading.Tasks;
+
+namespace OtherNamespace
+{
+    public struct AsyncSemaphoreReleaser : IDisposable
+    {
+        public void Dispose() { }
+    }
+}
+
+public class Program
+{
+    public async Task Main()
+    {
+        var releaser = new OtherNamespace.AsyncSemaphoreReleaser();
+        releaser.Dispose();
+        await Task.CompletedTask;
+    }
+}
+";
+
+        await Verifier.VerifyAnalyzerAsync(text);
     }
 }

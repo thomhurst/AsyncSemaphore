@@ -145,5 +145,32 @@ namespace Semaphores.Analyzers {
                 return ResourceManager.GetString("SEM0003Title", resourceCulture);
             }
         }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Do not call Dispose explicitly on AsyncSemaphoreReleaser; use the `using` keyword instead..
+        /// </summary>
+        internal static string SEM0004Description {
+            get {
+                return ResourceManager.GetString("SEM0004Description", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Do not call Dispose explicitly on AsyncSemaphoreReleaser.
+        /// </summary>
+        internal static string SEM0004MessageFormat {
+            get {
+                return ResourceManager.GetString("SEM0004MessageFormat", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Do not call Dispose explicitly on AsyncSemaphoreReleaser.
+        /// </summary>
+        internal static string SEM0004Title {
+            get {
+                return ResourceManager.GetString("SEM0004Title", resourceCulture);
+            }
+        }
     }
 }

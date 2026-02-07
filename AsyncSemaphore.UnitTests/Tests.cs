@@ -122,7 +122,7 @@ public class Tests
         return Task.Delay(500);
     }
 
-    public static IEnumerable<int> LoopCounts() => Enumerable.Range(0, 10);
+    public static IEnumerable<int> LoopCounts() => Enumerable.Range(1, 10);
 
     private async Task<TimeSpan> Measure(Func<Task> func)
     {
