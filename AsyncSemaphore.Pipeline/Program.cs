@@ -9,8 +9,8 @@ using AsyncSemaphore.Pipeline.Settings;
 
 var builder = Pipeline.CreateBuilder(args);
 
-builder.Configuration.AddJsonFile("appsettings.json")
-    .AddUserSecrets<Program>()
+builder.Configuration.AddJsonFile("appsettings.json", optional: true)
+    .AddUserSecrets<Program>(optional: true)
     .AddEnvironmentVariables();
 
 builder.Services.Configure<NuGetSettings>(builder.Configuration.GetSection("NuGet"));
