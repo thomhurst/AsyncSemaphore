@@ -1,5 +1,7 @@
 #pragma warning disable SEM0001
 
+using System.Runtime.CompilerServices;
+
 namespace Semaphores;
 
 public sealed class AsyncSemaphore : IAsyncSemaphore
@@ -12,6 +14,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask<AsyncSemaphoreReleaser> WaitAsync()
     {
         var task = _semaphoreSlim.WaitAsync();
@@ -25,6 +28,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout)
     {
         var task = _semaphoreSlim.WaitAsync(timeout);
@@ -40,6 +44,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask<AsyncSemaphoreReleaser> WaitAsync(CancellationToken cancellationToken)
     {
         var task = _semaphoreSlim.WaitAsync(cancellationToken);
@@ -53,6 +58,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
         var task = _semaphoreSlim.WaitAsync(timeout, cancellationToken);
@@ -86,7 +92,11 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     }
 
     /// <inheritdoc />
-    public int CurrentCount => _semaphoreSlim.CurrentCount;
+    public int CurrentCount
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _semaphoreSlim.CurrentCount;
+    }
 
     /// <inheritdoc />
     public void Dispose()

@@ -45,15 +45,15 @@ Benchmarks and allocations can be seen below.
 
 ```
 BenchmarkDotNet v0.15.8, Linux Ubuntu 25.10 (Questing Quokka)
-12th Gen Intel Core i7-12700K 3.60GHz, 1 CPU, 20 logical and 12 physical cores
-.NET SDK 9.0.112
-  [Host]     : .NET 9.0.11 (9.0.11, 9.0.1125.51716), X64 RyuJIT x86-64-v3
-  DefaultJob : .NET 9.0.11 (9.0.11, 9.0.1125.51716), X64 RyuJIT x86-64-v3
+12th Gen Intel Core i7-12700K 0.80GHz, 1 CPU, 20 logical and 12 physical cores
+.NET SDK 10.0.101
+  [Host]     : .NET 10.0.1 (10.0.1, 10.0.125.57005), X64 RyuJIT x86-64-v3
+  DefaultJob : .NET 10.0.1 (10.0.1, 10.0.125.57005), X64 RyuJIT x86-64-v3
 ```
 
 
 | Method                              | Mean     | Error    | StdDev   | Allocated |
 |------------------------------------ |---------:|---------:|---------:|----------:|
-| Raw_Semaphore_Slim                  | 31.07 ns | 0.056 ns | 0.044 ns |         - |
-| AsyncSemaphore_With_Inherited_Scope | 37.25 ns | 0.255 ns | 0.238 ns |         - |
-| AsyncSemaphore_With_Braced_Scope    | 37.07 ns | 0.373 ns | 0.312 ns |         - |
+| Raw_Semaphore_Slim                  | 29.95 ns | 0.054 ns | 0.048 ns |         - |
+| AsyncSemaphore_With_Inherited_Scope | 35.38 ns | 0.097 ns | 0.081 ns |         - |
+| AsyncSemaphore_With_Braced_Scope    | 35.72 ns | 0.247 ns | 0.231 ns |         - |
