@@ -379,14 +379,21 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             // their node is still queued until a release dequeues and settles it.
             var result = _core.GetResult(token);
 
+            if (_timeoutTimer is not null)
+            {
+                // Timer.Dispose does not wait for an in-flight callback (unlike
+                // CancellationTokenRegistration.Dispose), so a stale OnTimeout may still
+                // hold this node. Dropping it instead of pooling leaves _state at
+                // StateClaimed, so the stale CAS fails without touching a recycled core.
+                return result;
+            }
+
             _core.Reset();
 
             if (_cancellable)
             {
                 _cancellable = false;
                 _state = StatePending;
-                _timeoutTimer = null;
-                _timeout = default;
                 _cancellationRegistration = default;
                 _cancellationToken = default;
             }
