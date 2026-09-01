@@ -129,7 +129,9 @@ public class Tests
         const int workers = 8;
         const int iterationsPerWorker = 5_000;
 
-        var tasks = Enumerable.Range(0, workers).Select(async _ =>
+        // Task.Run puts every worker on its own thread; a plain async lambda with no await inside
+        // the loop would run each worker to completion inline and never actually contend
+        var tasks = Enumerable.Range(0, workers).Select(_ => Task.Run(async () =>
         {
             for (var i = 0; i < iterationsPerWorker; i++)
             {
@@ -140,7 +142,7 @@ public class Tests
                 Interlocked.Decrement(ref inCriticalSection);
                 Interlocked.Increment(ref completedIterations);
             }
-        }).ToArray();
+        })).ToArray();
 
         await Task.WhenAll(tasks);
 

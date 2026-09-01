@@ -2,6 +2,8 @@
 // semaphore's internals, which is exactly what the usage analyzers guard against.
 #pragma warning disable SEM0001, SEM0002, SEM0003
 
+using TUnit.Assertions.Enums;
+
 namespace AsyncSemaphore.UnitTests;
 
 /// <summary>
@@ -32,7 +34,7 @@ public class ContentionTests
 
         await WhenAllWithTimeout(waiters);
 
-        await Assert.That(completionOrder).IsEquivalentTo(Enumerable.Range(0, 10).ToList());
+        await Assert.That(completionOrder).IsEquivalentTo(Enumerable.Range(0, 10).ToList(), CollectionOrdering.Matching);
         await Assert.That(semaphore.CurrentCount).IsEqualTo(1);
 
         async Task Consume(ValueTask<Semaphores.AsyncSemaphoreReleaser> pending, int index)
@@ -93,7 +95,7 @@ public class ContentionTests
         const int workers = 12;
         const int iterationsPerWorker = 2_000;
 
-        var tasks = Enumerable.Range(0, workers).Select(async workerIndex =>
+        var tasks = Enumerable.Range(0, workers).Select(workerIndex => Task.Run(async () =>
         {
             for (var i = 0; i < iterationsPerWorker; i++)
             {
@@ -111,7 +113,7 @@ public class ContentionTests
                 Interlocked.Decrement(ref holders);
                 Interlocked.Increment(ref completed);
             }
-        }).ToArray();
+        })).ToArray();
 
         await WhenAllWithTimeout(tasks);
 
@@ -135,25 +137,39 @@ public class ContentionTests
 
         using var neverCancelled = new CancellationTokenSource();
 
+        // Hold every permit so each worker's first wait of every flavor is guaranteed to queue
+        var initialHolders = await HoldAllPermits(semaphore, maxCount);
+        var allQueued = new QueuedGate(workers);
+
         // Each flavor takes a different slow path: non-cancellable (skips the claim CAS),
         // token-armed (claim CAS + registration), and timer-armed (claim CAS + timer)
-        var tasks = Enumerable.Range(0, workers).Select(async workerIndex =>
+        var tasks = Enumerable.Range(0, workers).Select(workerIndex => Task.Run(async () =>
         {
             for (var i = 0; i < iterationsPerWorker; i++)
             {
-                using var @lock = (workerIndex % 3) switch
+                var pending = (workerIndex % 3) switch
                 {
-                    0 => await semaphore.WaitAsync(),
-                    1 => await semaphore.WaitAsync(neverCancelled.Token),
-                    _ => await semaphore.WaitAsync(TimeSpan.FromMinutes(5)),
+                    0 => semaphore.WaitAsync(),
+                    1 => semaphore.WaitAsync(neverCancelled.Token),
+                    _ => semaphore.WaitAsync(TimeSpan.FromMinutes(5)),
                 };
+
+                if (i == 0)
+                {
+                    allQueued.Signal();
+                }
+
+                using var @lock = await pending;
 
                 var current = Interlocked.Increment(ref holders);
                 InterlockedMax(ref maxObserved, current);
                 Interlocked.Decrement(ref holders);
                 Interlocked.Increment(ref completed);
             }
-        }).ToArray();
+        })).ToArray();
+
+        await allQueued.AllQueued;
+        ReleaseAll(initialHolders);
 
         await WhenAllWithTimeout(tasks);
 
@@ -427,7 +443,8 @@ public class ContentionTests
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        await Assert.That(async () => await semaphore.WaitAsync(cts.Token))
+        // A synchronous delegate: the throw must happen before any ValueTask is handed back
+        await Assert.That(() => { _ = semaphore.WaitAsync(cts.Token); })
             .ThrowsExactly<OperationCanceledException>();
 
         await Assert.That(semaphore.CurrentCount).IsEqualTo(1);
@@ -505,22 +522,34 @@ public class ContentionTests
         const int workers = 8;
         const int iterationsPerWorker = 3_000;
 
-        var tasks = Enumerable.Range(0, workers).Select(async workerIndex =>
+        // Hold both permits so every worker's first wait queues on A or B, then release
+        // both at once so the two instances see overlapping waits from the same threads
+        var holderA = await HoldAllPermits(semaphoreA, 1);
+        var holderB = await HoldAllPermits(semaphoreB, 1);
+        var allQueued = new QueuedGate(workers);
+
+        var tasks = Enumerable.Range(0, workers).Select(workerIndex => Task.Run(async () =>
         {
             for (var i = 0; i < iterationsPerWorker; i++)
             {
-                if ((workerIndex + i) % 2 == 0)
-                {
-                    using var @lock = await semaphoreA.WaitAsync();
+                var useA = (workerIndex + i) % 2 == 0;
+                var pending = useA ? semaphoreA.WaitAsync() : semaphoreB.WaitAsync();
 
+                if (i == 0)
+                {
+                    allQueued.Signal();
+                }
+
+                using var @lock = await pending;
+
+                if (useA)
+                {
                     var current = Interlocked.Increment(ref inA);
                     InterlockedMax(ref maxA, current);
                     Interlocked.Decrement(ref inA);
                 }
                 else
                 {
-                    using var @lock = await semaphoreB.WaitAsync();
-
                     var current = Interlocked.Increment(ref inB);
                     InterlockedMax(ref maxB, current);
                     Interlocked.Decrement(ref inB);
@@ -528,7 +557,11 @@ public class ContentionTests
 
                 Interlocked.Increment(ref completed);
             }
-        }).ToArray();
+        })).ToArray();
+
+        await allQueued.AllQueued;
+        ReleaseAll(holderA);
+        ReleaseAll(holderB);
 
         await WhenAllWithTimeout(tasks);
 
@@ -552,11 +585,24 @@ public class ContentionTests
         const int workers = 6;
         const int iterationsPerWorker = 2_000;
 
-        var tasks = Enumerable.Range(0, workers).Select(async _ =>
+        // Hold every outer and inner permit so all workers queue on the outer semaphore, then
+        // release everything at once so the winners immediately contend on the inner one
+        var outerHolders = await HoldAllPermits(outer, 2);
+        var innerHolders = await HoldAllPermits(inner, 1);
+        var allQueued = new QueuedGate(workers);
+
+        var tasks = Enumerable.Range(0, workers).Select(_ => Task.Run(async () =>
         {
             for (var i = 0; i < iterationsPerWorker; i++)
             {
-                using var outerLock = await outer.WaitAsync();
+                var pendingOuter = outer.WaitAsync();
+
+                if (i == 0)
+                {
+                    allQueued.Signal();
+                }
+
+                using var outerLock = await pendingOuter;
                 using var innerLock = await inner.WaitAsync();
 
                 var current = Interlocked.Increment(ref inInner);
@@ -564,7 +610,11 @@ public class ContentionTests
                 Interlocked.Decrement(ref inInner);
                 Interlocked.Increment(ref completed);
             }
-        }).ToArray();
+        })).ToArray();
+
+        await allQueued.AllQueued;
+        ReleaseAll(outerHolders);
+        ReleaseAll(innerHolders);
 
         await WhenAllWithTimeout(tasks);
 
@@ -626,6 +676,28 @@ public class ContentionTests
 
     public static IEnumerable<int> PermitCounts() => [1, 2, 4, 8];
 
+    private static async Task<Semaphores.AsyncSemaphoreReleaser[]> HoldAllPermits(Semaphores.AsyncSemaphore semaphore, int maxCount)
+    {
+        var holders = new Semaphores.AsyncSemaphoreReleaser[maxCount];
+
+        for (var i = 0; i < maxCount; i++)
+        {
+            holders[i] = await semaphore.WaitAsync();
+        }
+
+        return holders;
+    }
+
+    private static void ReleaseAll(Semaphores.AsyncSemaphoreReleaser[] holders)
+    {
+#pragma warning disable SEM0004 // the releasers were deliberately kept out of a using so the test controls the release moment
+        for (var i = 0; i < holders.Length; i++)
+        {
+            holders[i].Dispose();
+        }
+#pragma warning restore SEM0004
+    }
+
     private static void InterlockedMax(ref int location, int value)
     {
         int current;
@@ -647,5 +719,30 @@ public class ContentionTests
         }
 
         await all;
+    }
+
+    /// <summary>
+    /// Completes once every worker has issued its first wait. Combined with pre-held permits this
+    /// guarantees each worker actually queues instead of racing through the fast path unopposed.
+    /// </summary>
+    private sealed class QueuedGate
+    {
+        private readonly TaskCompletionSource<bool> _allQueued = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _remaining;
+
+        public QueuedGate(int workers)
+        {
+            _remaining = workers;
+        }
+
+        public Task AllQueued => _allQueued.Task;
+
+        public void Signal()
+        {
+            if (Interlocked.Decrement(ref _remaining) == 0)
+            {
+                _allQueued.TrySetResult(true);
+            }
+        }
     }
 }

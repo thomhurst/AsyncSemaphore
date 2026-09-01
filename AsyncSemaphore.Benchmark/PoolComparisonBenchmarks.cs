@@ -27,7 +27,6 @@ public class PoolComparisonBenchmarks
 
     public sealed class Node
     {
-        public object? Owner;
         public int Value;
     }
 
@@ -64,8 +63,6 @@ public class PoolComparisonBenchmarks
                 node = new Node();
             }
 
-            node.Owner = this;
-
             return node;
         }
 
@@ -73,7 +70,6 @@ public class PoolComparisonBenchmarks
         {
             if (t_cached is null)
             {
-                node.Owner = null;
                 t_cached = node;
 
                 return;

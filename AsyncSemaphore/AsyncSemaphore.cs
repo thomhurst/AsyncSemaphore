@@ -89,6 +89,13 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             return new ValueTask<AsyncSemaphoreReleaser>(new AsyncSemaphoreReleaser(this));
         }
 
+        if (timeout == TimeSpan.Zero)
+        {
+            // A zero timeout is a single attempt: fail here without renting a node, arming a timer,
+            // or creating waiter debt that a concurrent releaser would have to spin on and settle.
+            return new ValueTask<AsyncSemaphoreReleaser>(Task.FromException<AsyncSemaphoreReleaser>(CreateTimeoutException(timeout)));
+        }
+
         return EnqueueWaiter(timeout, cancellationToken);
     }
 
@@ -255,6 +262,11 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         }
     }
 
+    private static TimeoutException CreateTimeoutException(TimeSpan timeout)
+    {
+        return new TimeoutException($"The semaphore wait exceeded the timeout of {timeout}.");
+    }
+
     private sealed class Waiter : IValueTaskSource<AsyncSemaphoreReleaser>
     {
         private const int StatePending = 0;
@@ -323,12 +335,6 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             _timeout = timeout;
             _cancellationToken = cancellationToken;
 
-            if (timeout == TimeSpan.Zero)
-            {
-                OnTimeout(this);
-                return;
-            }
-
             if (cancellationToken.CanBeCanceled)
             {
                 _cancellationRegistration = cancellationToken.Register(CancellationCallback, this);
@@ -358,7 +364,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             waiter._cancellationRegistration.Dispose();
             waiter._timeoutTimer?.Dispose();
 
-            waiter._core.SetException(new TimeoutException($"The semaphore wait exceeded the timeout of {waiter._timeout}."));
+            waiter._core.SetException(CreateTimeoutException(waiter._timeout));
         }
 
         private static void OnCancelled(Waiter waiter)
