@@ -29,7 +29,7 @@ The CI pipeline (`AsyncSemaphore.Pipeline` project) orchestrates builds via Modu
 
 **Core library** (`AsyncSemaphore/`, namespace `Semaphores`):
 - `AsyncSemaphore` — sealed class implementing `IAsyncSemaphore`. Custom lock-free core (no `SemaphoreSlim`): an `Interlocked` counter where negative values represent queued waiters, a `ConcurrentQueue` of pooled `IValueTaskSource` waiter nodes (zero allocation, contended or not), and CAS-arbitrated cancellation/timeout. Cancelled nodes stay queued as dead entries; a release settles them via a compensation increment. Returns `AsyncSemaphoreReleaser` from `WaitAsync()` overloads.
-- `AsyncSemaphoreReleaser` — **struct** implementing `IDisposable`. Uses `Interlocked.Exchange` to guarantee single-release semantics. Zero-allocation design.
+- `AsyncSemaphoreReleaser` — **struct** implementing `IDisposable`. A plain read-then-clear of the semaphore field makes a repeated `Dispose` of the same struct a no-op with no interlocked cost (the interlocked publish is `Release()` itself; copies of the struct are not protected). Zero-allocation design.
 - `IAsyncSemaphore` — interface for DI/mocking.
 
 **Roslyn analyzers** (`AsyncSemaphore.Analyzers/AsyncSemaphore.Analyzers/`):

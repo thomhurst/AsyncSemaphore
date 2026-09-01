@@ -1,4 +1,4 @@
 using AsyncSemaphore.Benchmark;
 using BenchmarkDotNet.Running;
 
-BenchmarkSwitcher.FromTypes([typeof(Benchmarks), typeof(PoolComparisonBenchmarks)]).Run(args);
+BenchmarkSwitcher.FromTypes([typeof(Benchmarks), typeof(PoolComparisonBenchmarks), typeof(AbBenchmarks)]).Run(args);
