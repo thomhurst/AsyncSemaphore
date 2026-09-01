@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AsyncSemaphore is a .NET library that wraps `SemaphoreSlim` with automatic release via the `IDisposable` `using` pattern. It includes Roslyn analyzers (SEM0001–SEM0004) to enforce correct usage. The namespace is `Semaphores` (not `AsyncSemaphore`).
+AsyncSemaphore is a .NET library providing a custom lock-free async semaphore with automatic release via the `IDisposable` `using` pattern. It includes Roslyn analyzers (SEM0001–SEM0004) to enforce correct usage. The namespace is `Semaphores` (not `AsyncSemaphore`).
 
 ## Build & Test Commands
 
@@ -28,7 +28,7 @@ The CI pipeline (`AsyncSemaphore.Pipeline` project) orchestrates builds via Modu
 ## Architecture
 
 **Core library** (`AsyncSemaphore/`, namespace `Semaphores`):
-- `AsyncSemaphore` — sealed class implementing `IAsyncSemaphore`. Wraps a `SemaphoreSlim` and returns `AsyncSemaphoreReleaser` from `WaitAsync()` overloads.
+- `AsyncSemaphore` — sealed class implementing `IAsyncSemaphore`. Custom lock-free core (no `SemaphoreSlim`): an `Interlocked` counter where negative values represent queued waiters, a `ConcurrentQueue` of pooled `IValueTaskSource` waiter nodes (zero allocation, contended or not), and CAS-arbitrated cancellation/timeout. Cancelled nodes stay queued as dead entries; a release settles them via a compensation increment. Returns `AsyncSemaphoreReleaser` from `WaitAsync()` overloads.
 - `AsyncSemaphoreReleaser` — **struct** implementing `IDisposable`. Uses `Interlocked.Exchange` to guarantee single-release semantics. Zero-allocation design.
 - `IAsyncSemaphore` — interface for DI/mocking.
 
