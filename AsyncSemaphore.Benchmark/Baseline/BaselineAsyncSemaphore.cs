@@ -4,19 +4,15 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks.Sources;
 
-namespace Semaphores;
+namespace AsyncSemaphore.Benchmark.Baseline;
 
-public sealed class AsyncSemaphore : IAsyncSemaphore
+/// <summary>
+/// Frozen snapshot of the core as of commit 66ad5f7 (lock-free rewrite, before the micro-optimisation
+/// pass), kept so <see cref="AbBenchmarks"/> can A/B the working-tree core against a fixed reference
+/// in the same run. Do not edit; regenerate from a newer commit if a new baseline is wanted.
+/// </summary>
+public sealed class BaselineAsyncSemaphore
 {
-    /// <summary>
-    /// Smallest tick count whose (truncated) millisecond value is -1, i.e. the lowest timeout
-    /// <see cref="SemaphoreSlim"/> accepts.
-    /// </summary>
-    private const long MinTimeoutTicks = -(2 * TimeSpan.TicksPerMillisecond) + 1;
-
-    /// <summary>Largest tick count whose (truncated) millisecond value still fits in an <see cref="int"/>.</summary>
-    private const long MaxTimeoutTicks = ((int.MaxValue + 1L) * TimeSpan.TicksPerMillisecond) - 1;
-
     /// <summary>
     /// Positive values are available permits. Negative values are outstanding waiters
     /// (each of which has enqueued, or is committed to enqueueing, a node in <see cref="_waiters"/>).
@@ -39,7 +35,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
     private bool _disposed;
 
-    public AsyncSemaphore(int maxCount)
+    public BaselineAsyncSemaphore(int maxCount)
     {
         if (maxCount < 1)
         {
@@ -49,45 +45,41 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         _count = maxCount;
     }
 
-    /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ValueTask<AsyncSemaphoreReleaser> WaitAsync()
+    public ValueTask<BaselineReleaser> WaitAsync()
     {
         ThrowIfDisposed();
 
         if (TryAcquireFast())
         {
-            return new ValueTask<AsyncSemaphoreReleaser>(new AsyncSemaphoreReleaser(this));
+            return new ValueTask<BaselineReleaser>(new BaselineReleaser(this));
         }
 
         return EnqueueWaiter(Timeout.InfiniteTimeSpan, default);
     }
 
-    /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout)
+    public ValueTask<BaselineReleaser> WaitAsync(TimeSpan timeout)
     {
         return WaitAsync(timeout, CancellationToken.None);
     }
 
-    /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ValueTask<AsyncSemaphoreReleaser> WaitAsync(CancellationToken cancellationToken)
+    public ValueTask<BaselineReleaser> WaitAsync(CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
 
         if (TryAcquireFast())
         {
-            return new ValueTask<AsyncSemaphoreReleaser>(new AsyncSemaphoreReleaser(this));
+            return new ValueTask<BaselineReleaser>(new BaselineReleaser(this));
         }
 
         return EnqueueWaiter(Timeout.InfiniteTimeSpan, cancellationToken);
     }
 
-    /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    public ValueTask<BaselineReleaser> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
         ValidateTimeout(timeout);
@@ -95,14 +87,14 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
         if (TryAcquireFast())
         {
-            return new ValueTask<AsyncSemaphoreReleaser>(new AsyncSemaphoreReleaser(this));
+            return new ValueTask<BaselineReleaser>(new BaselineReleaser(this));
         }
 
         if (timeout == TimeSpan.Zero)
         {
             // A zero timeout is a single attempt: fail here without renting a node, arming a timer,
             // or creating waiter debt that a concurrent releaser would have to spin on and settle.
-            return TimedOut(timeout);
+            return new ValueTask<BaselineReleaser>(Task.FromException<BaselineReleaser>(CreateTimeoutException(timeout)));
         }
 
         return EnqueueWaiter(timeout, cancellationToken);
@@ -133,7 +125,6 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         return false;
     }
 
-    /// <inheritdoc />
     public int CurrentCount
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -144,16 +135,14 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         }
     }
 
-    /// <inheritdoc />
     public void Dispose()
     {
         _disposed = true;
     }
 
     /// <summary>
-    /// Returns a permit. Called exactly once per successful acquisition, by <see cref="AsyncSemaphoreReleaser.Dispose"/>.
+    /// Returns a permit. Called exactly once per successful acquisition, by <see cref="BaselineReleaser.Dispose"/>.
     /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void Release()
     {
         if (Interlocked.Increment(ref _count) <= 0)
@@ -195,23 +184,33 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         }
     }
 
-    private ValueTask<AsyncSemaphoreReleaser> EnqueueWaiter(TimeSpan timeout, CancellationToken cancellationToken)
+    private ValueTask<BaselineReleaser> EnqueueWaiter(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        // The node is rented up front so the decrement-to-enqueue window a releaser spin-waits on
-        // stays as small as possible.
-        var waiter = RentWaiter();
-        var version = waiter.Version;
+        var waiter = t_pooledWaiter;
 
-        // The decrement is the commit point: a permit may have appeared since the fast path failed.
-        if (Interlocked.Decrement(ref _count) >= 0)
+        if (waiter is not null)
         {
-            // Never owned or armed, still clean.
-            ReturnWaiter(waiter);
-
-            return new ValueTask<AsyncSemaphoreReleaser>(new AsyncSemaphoreReleaser(this));
+            t_pooledWaiter = null;
+        }
+        else if ((waiter = Interlocked.Exchange(ref _pooledWaiter, null)) is null && !_pool.TryDequeue(out waiter))
+        {
+            waiter = new Waiter();
         }
 
         waiter.SetOwner(this);
+
+        var version = waiter.Version;
+
+        // The decrement is the commit point: a permit may have appeared since the fast path failed.
+        // The node is rented up front so the decrement-to-enqueue window a releaser spin-waits on
+        // stays as small as possible.
+        if (Interlocked.Decrement(ref _count) >= 0)
+        {
+            // Never armed, still clean.
+            ReturnWaiter(waiter);
+
+            return new ValueTask<BaselineReleaser>(new BaselineReleaser(this));
+        }
 
         // Arm cancellation before enqueueing: a claim can only happen after the enqueue, so the
         // claimer always observes fully-armed timer/registration fields when cleaning them up.
@@ -223,29 +222,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
         _waiters.Enqueue(waiter);
 
-        return new ValueTask<AsyncSemaphoreReleaser>(waiter, version);
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private Waiter RentWaiter()
-    {
-        var waiter = t_pooledWaiter;
-
-        if (waiter is not null)
-        {
-            t_pooledWaiter = null;
-
-            return waiter;
-        }
-
-        // Test before exchanging so an empty slot costs a read, not a locked write on a shared line.
-        if (Volatile.Read(ref _pooledWaiter) is not null
-            && (waiter = Interlocked.Exchange(ref _pooledWaiter, null)) is not null)
-        {
-            return waiter;
-        }
-
-        return _pool.TryDequeue(out waiter) ? waiter : new Waiter();
+        return new ValueTask<BaselineReleaser>(waiter, version);
     }
 
     private void ReturnWaiter(Waiter waiter)
@@ -259,9 +236,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             return;
         }
 
-        // Test before the CAS so a full slot costs a read, not a failed locked write.
-        if (Volatile.Read(ref _pooledWaiter) is not null
-            || Interlocked.CompareExchange(ref _pooledWaiter, waiter, null) is not null)
+        if (Interlocked.CompareExchange(ref _pooledWaiter, waiter, null) != null)
         {
             _pool.Enqueue(waiter);
         }
@@ -272,41 +247,18 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     {
         if (_disposed)
         {
-            ThrowObjectDisposed();
+            throw new ObjectDisposedException(nameof(BaselineAsyncSemaphore));
         }
     }
 
-    /// <summary>
-    /// Same contract as <see cref="SemaphoreSlim"/> (<c>(long)timeout.TotalMilliseconds</c> must lie in
-    /// [-1, <see cref="int.MaxValue"/>]) as a single unsigned range compare on the raw ticks, which
-    /// avoids the floating-point conversion on every timed wait.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void ValidateTimeout(TimeSpan timeout)
     {
-        if (unchecked((ulong)(timeout.Ticks - MinTimeoutTicks)) > unchecked((ulong)(MaxTimeoutTicks - MinTimeoutTicks)))
+        var totalMilliseconds = (long)timeout.TotalMilliseconds;
+
+        if (totalMilliseconds < Timeout.Infinite || totalMilliseconds > int.MaxValue)
         {
-            ThrowTimeoutOutOfRange(timeout);
+            throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "The timeout must be -1 milliseconds (infinite) or a non-negative value <= Int32.MaxValue milliseconds.");
         }
-    }
-
-    // Throw and fault helpers are kept out of line so the inlined fast paths stay small.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void ThrowObjectDisposed()
-    {
-        throw new ObjectDisposedException(nameof(AsyncSemaphore));
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void ThrowTimeoutOutOfRange(TimeSpan timeout)
-    {
-        throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "The timeout must be -1 milliseconds (infinite) or a non-negative value <= Int32.MaxValue milliseconds.");
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static ValueTask<AsyncSemaphoreReleaser> TimedOut(TimeSpan timeout)
-    {
-        return new ValueTask<AsyncSemaphoreReleaser>(Task.FromException<AsyncSemaphoreReleaser>(CreateTimeoutException(timeout)));
     }
 
     private static TimeoutException CreateTimeoutException(TimeSpan timeout)
@@ -314,7 +266,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         return new TimeoutException($"The semaphore wait exceeded the timeout of {timeout}.");
     }
 
-    private sealed class Waiter : IValueTaskSource<AsyncSemaphoreReleaser>
+    private sealed class Waiter : IValueTaskSource<BaselineReleaser>
     {
         private const int StatePending = 0;
         private const int StateClaimed = 1;
@@ -323,9 +275,9 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         private static readonly TimerCallback TimeoutCallback = static state => OnTimeout((Waiter)state!);
         private static readonly Action<object?> CancellationCallback = static state => OnCancelled((Waiter)state!);
 
-        private AsyncSemaphore _owner = null!;
+        private BaselineAsyncSemaphore _owner = null!;
 
-        private ManualResetValueTaskSourceCore<AsyncSemaphoreReleaser> _core;
+        private ManualResetValueTaskSourceCore<BaselineReleaser> _core;
         private int _state;
         private bool _cancellable;
         private Timer? _timeoutTimer;
@@ -345,7 +297,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetOwner(AsyncSemaphore owner)
+        public void SetOwner(BaselineAsyncSemaphore owner)
         {
             _owner = owner;
         }
@@ -370,26 +322,10 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             {
                 // The cancellation callbacks lose the CAS and return immediately, so these cannot deadlock.
                 _cancellationRegistration.Dispose();
-
-                var timer = _timeoutTimer;
-
-                if (timer is not null)
-                {
-#if NETSTANDARD2_0
-                    timer.Dispose();
-#else
-                    // DisposeAsync completes synchronously only when no callback is in flight (it checks
-                    // the callback count under the same lock Fire takes before running one), which proves
-                    // no stale OnTimeout can ever touch this node again, so it is safe to pool.
-                    if (timer.DisposeAsync().IsCompletedSuccessfully)
-                    {
-                        _timeoutTimer = null;
-                    }
-#endif
-                }
+                _timeoutTimer?.Dispose();
             }
 
-            _core.SetResult(new AsyncSemaphoreReleaser(_owner));
+            _core.SetResult(new BaselineReleaser(_owner));
         }
 
         public void ArmCancellation(TimeSpan timeout, CancellationToken cancellationToken)
@@ -400,19 +336,12 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
             if (cancellationToken.CanBeCanceled)
             {
-#if NETSTANDARD2_0
                 _cancellationRegistration = cancellationToken.Register(CancellationCallback, this);
-#else
-                // The callback only performs a CAS and completes the core, so it needs no ExecutionContext.
-                _cancellationRegistration = cancellationToken.UnsafeRegister(CancellationCallback, this);
-#endif
             }
 
             if (timeout != Timeout.InfiniteTimeSpan && Volatile.Read(ref _state) == StatePending)
             {
-                // Integer milliseconds (already validated to fit) so the Timer constructor skips its own
-                // floating-point TimeSpan conversion.
-                var timer = new Timer(TimeoutCallback, this, (int)(timeout.Ticks / TimeSpan.TicksPerMillisecond), Timeout.Infinite);
+                var timer = new Timer(TimeoutCallback, this, timeout, Timeout.InfiniteTimeSpan);
 
                 _timeoutTimer = timer;
 
@@ -449,7 +378,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             waiter._core.SetException(new OperationCanceledException(waiter._cancellationToken));
         }
 
-        public AsyncSemaphoreReleaser GetResult(short token)
+        public BaselineReleaser GetResult(short token)
         {
             // Throws for cancelled/timed-out waiters, which must not be pooled:
             // their node is still queued until a release dequeues and settles it.
@@ -457,10 +386,10 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
             if (_timeoutTimer is not null)
             {
-                // A timer callback was in flight when the claimer disposed the timer (Timer.Dispose
-                // does not wait for it, unlike CancellationTokenRegistration.Dispose), so a stale
-                // OnTimeout may still hold this node. Dropping it instead of pooling leaves _state
-                // at StateClaimed, so the stale CAS fails without touching a recycled core.
+                // Timer.Dispose does not wait for an in-flight callback (unlike
+                // CancellationTokenRegistration.Dispose), so a stale OnTimeout may still
+                // hold this node. Dropping it instead of pooling leaves _state at
+                // StateClaimed, so the stale CAS fails without touching a recycled core.
                 return result;
             }
 

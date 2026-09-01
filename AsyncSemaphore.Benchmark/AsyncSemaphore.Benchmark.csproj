@@ -13,6 +13,7 @@
 
     <ItemGroup>
       <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+      <PackageReference Include="Reservoir" Version="1.5.0" />
     </ItemGroup>
 
 </Project>
