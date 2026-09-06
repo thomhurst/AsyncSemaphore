@@ -19,12 +19,15 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
     /// <summary>
     /// Positive values are available permits. Negative values are outstanding waiters
-    /// (each of which has enqueued, or is committed to enqueueing, a node in <see cref="_waiters"/>).
+    /// protected by <see cref="_waitersLock"/> while adding, claiming, or cancelling nodes.
     /// </summary>
     private int _count;
 
-    private readonly ConcurrentQueue<Waiter> _waiters = new();
+    private readonly object _waitersLock = new();
+    private readonly LinkedList<Waiter> _waiters = new();
     private readonly ConcurrentQueue<Waiter> _pool = new();
+    private const int MaxPooledWaiters = 256;
+    private int _pooledCount;
 
     /// <summary>Single-slot fast cache in front of <see cref="_pool"/> for the common ping-pong case.</summary>
     private Waiter? _pooledWaiter;
@@ -110,8 +113,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
     /// <summary>
     /// Optimistically takes a permit while the count is positive, without ever driving it negative.
-    /// Only the slow path's decrement creates waiter debt, which lets it rent its node up front and
-    /// keep the decrement-to-enqueue window (which a releaser spin-waits on) as small as possible.
+    /// Only the slow path creates waiter debt, while holding the removable queue's lock.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool TryAcquireFast()
@@ -156,74 +158,104 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void Release()
     {
-        if (Interlocked.Increment(ref _count) <= 0)
+        var count = Volatile.Read(ref _count);
+        while (count >= 0)
         {
-            ReleaseNextWaiter();
+            var observed = Interlocked.CompareExchange(ref _count, count + 1, count);
+            if (observed == count)
+            {
+                return;
+            }
+
+            count = observed;
         }
+
+        ReleaseNextWaiter();
     }
 
     /// <summary>
-    /// The increment observed outstanding waiters, so this permit must be handed to exactly one of them.
-    /// The dequeue is the settlement token: whoever dequeues a node owns settling it, so a node
-    /// cancelled while queued is compensated here (its debt removed from the counter) and the permit
-    /// is re-deposited — going around again if the re-deposit still observes outstanding waiters.
+    /// Serialize handoff with removal so cancellation cannot remove a node after a release has
+    /// committed to handing it a permit. Completion and registration disposal happen outside the lock.
     /// </summary>
     private void ReleaseNextWaiter()
     {
-        while (true)
+        Waiter? waiter = null;
+        lock (_waitersLock)
         {
-            Waiter? waiter;
-            var spinner = default(SpinWait);
-
-            while (!_waiters.TryDequeue(out waiter))
+            if (Interlocked.Increment(ref _count) <= 0)
             {
-                // A decrement that goes negative is committed to enqueueing, so a node will appear.
-                spinner.SpinOnce();
-            }
-
-            if (waiter.TryClaim())
-            {
-                waiter.SetAcquired();
-                return;
-            }
-
-            // Dead (cancelled/timed-out) node: remove its debt and re-deposit the permit.
-            if (Interlocked.Increment(ref _count) > 0)
-            {
-                return;
+                waiter = _waiters.First!.Value;
+                _waiters.RemoveFirst();
+                waiter.TryClaim();
             }
         }
+
+        waiter?.SetAcquired();
     }
 
     private ValueTask<AsyncSemaphoreReleaser> EnqueueWaiter(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        // The node is rented up front so the decrement-to-enqueue window a releaser spin-waits on
-        // stays as small as possible.
         var waiter = RentWaiter();
         var version = waiter.Version;
+        var acquired = false;
 
-        // The decrement is the commit point: a permit may have appeared since the fast path failed.
-        if (Interlocked.Decrement(ref _count) >= 0)
+        lock (_waitersLock)
         {
-            // Never owned or armed, still clean.
-            ReturnWaiter(waiter);
+            if (TryAcquireFast())
+            {
+                ReturnWaiter(waiter);
+                return new ValueTask<AsyncSemaphoreReleaser>(new AsyncSemaphoreReleaser(this));
+            }
 
-            return new ValueTask<AsyncSemaphoreReleaser>(new AsyncSemaphoreReleaser(this));
+            waiter.SetOwner(this);
+
+            // Arm before creating debt. Synchronous token cancellation may reenter the lock;
+            // foreign callbacks wait until fields and queue membership are fully initialized.
+            if (timeout != Timeout.InfiniteTimeSpan || cancellationToken.CanBeCanceled)
+            {
+                waiter.ArmCancellation(timeout, cancellationToken);
+            }
+
+            if (!waiter.IsCancelled)
+            {
+                // An uncontended release can publish a permit even while we hold this lock.
+                if (Interlocked.Decrement(ref _count) >= 0)
+                {
+                    waiter.TryClaim();
+                    acquired = true;
+                }
+                else
+                {
+                    _waiters.AddLast(waiter.QueueNode);
+                }
+            }
         }
 
-        waiter.SetOwner(this);
-
-        // Arm cancellation before enqueueing: a claim can only happen after the enqueue, so the
-        // claimer always observes fully-armed timer/registration fields when cleaning them up.
-        // If cancellation fires first, the node is enqueued dead and settled by a later release.
-        if (timeout != Timeout.InfiniteTimeSpan || cancellationToken.CanBeCanceled)
+        if (acquired)
         {
-            waiter.ArmCancellation(timeout, cancellationToken);
+            waiter.SetAcquired();
         }
-
-        _waiters.Enqueue(waiter);
 
         return new ValueTask<AsyncSemaphoreReleaser>(waiter, version);
+    }
+
+    private bool TryCancelWaiter(Waiter waiter)
+    {
+        lock (_waitersLock)
+        {
+            if (!waiter.TryCancel())
+            {
+                return false;
+            }
+
+            if (waiter.QueueNode.List is not null)
+            {
+                _waiters.Remove(waiter.QueueNode);
+                Interlocked.Increment(ref _count);
+            }
+
+            return true;
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -245,7 +277,13 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             return waiter;
         }
 
-        return _pool.TryDequeue(out waiter) ? waiter : new Waiter();
+        if (_pool.TryDequeue(out waiter))
+        {
+            Interlocked.Decrement(ref _pooledCount);
+            return waiter;
+        }
+
+        return new Waiter();
     }
 
     private void ReturnWaiter(Waiter waiter)
@@ -263,7 +301,14 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         if (Volatile.Read(ref _pooledWaiter) is not null
             || Interlocked.CompareExchange(ref _pooledWaiter, waiter, null) is not null)
         {
-            _pool.Enqueue(waiter);
+            if (Interlocked.Increment(ref _pooledCount) <= MaxPooledWaiters)
+            {
+                _pool.Enqueue(waiter);
+            }
+            else
+            {
+                Interlocked.Decrement(ref _pooledCount);
+            }
         }
     }
 
@@ -336,7 +381,13 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         public Waiter()
         {
             _core.RunContinuationsAsynchronously = true;
+            QueueNode = new LinkedListNode<Waiter>(this);
         }
+
+        public LinkedListNode<Waiter> QueueNode { get; }
+        public bool IsCancelled => _state == StateCancelled;
+
+        public bool TryCancel() => Interlocked.CompareExchange(ref _state, StateCancelled, StatePending) == StatePending;
 
         public short Version
         {
@@ -426,7 +477,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
         private static void OnTimeout(Waiter waiter)
         {
-            if (Interlocked.CompareExchange(ref waiter._state, StateCancelled, StatePending) != StatePending)
+            if (!waiter._owner.TryCancelWaiter(waiter))
             {
                 return;
             }
@@ -439,7 +490,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
         private static void OnCancelled(Waiter waiter)
         {
-            if (Interlocked.CompareExchange(ref waiter._state, StateCancelled, StatePending) != StatePending)
+            if (!waiter._owner.TryCancelWaiter(waiter))
             {
                 return;
             }
@@ -451,8 +502,8 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
         public AsyncSemaphoreReleaser GetResult(short token)
         {
-            // Throws for cancelled/timed-out waiters, which must not be pooled:
-            // their node is still queued until a release dequeues and settles it.
+            // Cancelled/timed-out nodes are unlinked immediately, but must not be pooled:
+            // cancellation/timer callbacks may still be using their fields after completion.
             var result = _core.GetResult(token);
 
             if (_timeoutTimer is not null)

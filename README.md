@@ -48,6 +48,8 @@ Successful acquisitions allocate one small shared release-state object. This ens
 
 Contended waits reuse pooled `IValueTaskSource` nodes. Timed or cancellable waits may additionally allocate timers, registrations, and exceptions. The implementation is not allocation-free.
 
+Uncontended acquisition and release use atomic counter operations. Contended waits use a removable queue protected by a lock, so cancellation and timeout remove waiters immediately even when a permit remains held. The shared overflow pool retains at most 256 waiter nodes, in addition to one shared cache slot and one thread-local slot per thread.
+
 Run the benchmarks for your workload and runtime:
 
 ```shell
