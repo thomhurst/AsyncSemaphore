@@ -168,7 +168,7 @@ public class ContentionTests
             }
         })).ToArray();
 
-        await allQueued.AllQueued;
+        await allQueued.AllQueued.WaitAsync(StressTimeout);
         ReleaseAll(initialHolders);
 
         await WhenAllWithTimeout(tasks);
@@ -559,7 +559,7 @@ public class ContentionTests
             }
         })).ToArray();
 
-        await allQueued.AllQueued;
+        await allQueued.AllQueued.WaitAsync(StressTimeout);
         ReleaseAll(holderA);
         ReleaseAll(holderB);
 
@@ -612,7 +612,7 @@ public class ContentionTests
             }
         })).ToArray();
 
-        await allQueued.AllQueued;
+        await allQueued.AllQueued.WaitAsync(StressTimeout);
         ReleaseAll(outerHolders);
         ReleaseAll(innerHolders);
 
