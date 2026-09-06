@@ -6,6 +6,7 @@ using System.Threading.Tasks.Sources;
 
 namespace Semaphores;
 
+/// <summary>An asynchronous semaphore whose acquired permits are released by disposing their handles.</summary>
 public sealed class AsyncSemaphore : IAsyncSemaphore
 {
     /// <summary>
@@ -37,7 +38,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     [ThreadStatic]
     private static Waiter? t_pooledWaiter;
 
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public AsyncSemaphore(int maxCount)
     {
@@ -98,7 +99,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             return new ValueTask<AsyncSemaphoreReleaser>(new AsyncSemaphoreReleaser(this));
         }
 
-        if (timeout == TimeSpan.Zero)
+        if (timeout.Ticks / TimeSpan.TicksPerMillisecond == 0)
         {
             // A zero timeout is a single attempt: fail here without renting a node, arming a timer,
             // or creating waiter debt that a concurrent releaser would have to spin on and settle.
@@ -144,7 +145,9 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>Prevents subsequent waits from acquiring permits.</summary>
+    /// <remarks>Existing acquisitions can still release, and pending waits can still acquire,
+    /// time out, or be cancelled. Disposal does not cancel or drain pending waits.</remarks>
     public void Dispose()
     {
         _disposed = true;

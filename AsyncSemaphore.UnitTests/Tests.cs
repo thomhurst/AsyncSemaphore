@@ -5,58 +5,43 @@ public class Tests
     [Test]
     public async Task Can_Enter_Immediately()
     {
-        var semaphore = new Semaphores.AsyncSemaphore(1);
-        
-        var time = await Measure(async () =>
-        {
-            using var @lock = await semaphore.WaitAsync();
-        });
-        
-        await Assert.That(time).IsLessThan(TimeSpan.FromMilliseconds(100));
+        using var semaphore = new Semaphores.AsyncSemaphore(1);
+        var pending = semaphore.WaitAsync();
+        await Assert.That(pending.IsCompletedSuccessfully).IsTrue();
+        using var handle = await pending;
     }
-    
-    [Test]
-    [MethodDataSource(nameof(LoopCounts))]
-    public async Task WaitsForPreviousSemaphore(int loopCount)
-    {
-        var semaphore = new Semaphores.AsyncSemaphore(1);
-        
-        var time = await Measure(async () =>
-        {
-            for (var i = 0; i < loopCount; i++)
-            {
-                using var @lock = await semaphore.WaitAsync();
-                await DoSomething();
-            }
-        });
 
-        await Assert.That(time).IsGreaterThan(TimeSpan.FromMilliseconds(500 * (loopCount - 1)));
-    }
-    
     [Test]
-    [MethodDataSource(nameof(LoopCounts))]
-    public async Task WaitsForPreviousSemaphore_Even_When_Exception_Thrown(int loopCount)
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Queued_Waiter_Enters_After_Previous_Scope_Exits(bool throwInsideScope)
     {
-        var semaphore = new Semaphores.AsyncSemaphore(1);
-        
-        var time = await Measure(async () =>
+        using var semaphore = new Semaphores.AsyncSemaphore(1);
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exit = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = Hold();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var pending = semaphore.WaitAsync();
+        await Assert.That(pending.IsCompleted).IsFalse();
+        exit.SetResult(true);
+        using (await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(10))) { }
+        if (throwInsideScope)
         {
-            for (var i = 0; i < loopCount; i++)
-            {
-                try
-                {
-                    using var @lock = await semaphore.WaitAsync();
-                    await DoSomething();
-                    throw new Exception();
-                }
-                catch
-                {
-                    // ignored
-                }
-            }
-        });
+            await Assert.That(async () => await first).ThrowsExactly<InvalidOperationException>();
+        }
+        else
+        {
+            await first;
+        }
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(1);
 
-        await Assert.That(time).IsGreaterThan(TimeSpan.FromMilliseconds(500 * (loopCount - 1)));
+        async Task Hold()
+        {
+            using var handle = await semaphore.WaitAsync();
+            entered.SetResult(true);
+            await exit.Task;
+            if (throwInsideScope) { throw new InvalidOperationException(); }
+        }
     }
 
     [Test]
@@ -307,19 +292,4 @@ public class Tests
         while (value > current && Interlocked.CompareExchange(ref location, value, current) != current);
     }
 
-    private Task DoSomething()
-    {
-        return Task.Delay(500);
-    }
-
-    public static IEnumerable<int> LoopCounts() => Enumerable.Range(1, 10);
-
-    private async Task<TimeSpan> Measure(Func<Task> func)
-    {
-        var start = DateTime.Now;
-
-        await func();
-
-        return DateTime.Now - start;
-    } 
 }
