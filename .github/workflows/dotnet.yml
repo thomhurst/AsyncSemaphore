@@ -41,6 +41,10 @@ jobs:
         with:
           user: ${{ secrets.NUGET_USER }}
 
+      - name: Verify packed analyzers in consumer projects
+        shell: pwsh
+        run: ./scripts/Test-Packages.ps1
+
       - name: Run Pipeline
         run: dotnet run -c Release
         working-directory: "AsyncSemaphore.Pipeline"
