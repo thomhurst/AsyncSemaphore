@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AsyncSemaphore is a .NET library providing a custom lock-free async semaphore with automatic release via the `IDisposable` `using` pattern. It includes Roslyn analyzers (SEM0001–SEM0004) to enforce correct usage. The namespace is `Semaphores` (not `AsyncSemaphore`).
+AsyncSemaphore is a .NET library providing a custom async semaphore with atomic fast paths and a removable waiter queue with automatic release via the `IDisposable` `using` pattern. It includes Roslyn analyzers (SEM0001–SEM0004) to enforce correct usage. The namespace is `Semaphores` (not `AsyncSemaphore`).
 
 ## Build & Test Commands
 
@@ -28,7 +28,7 @@ The CI pipeline (`AsyncSemaphore.Pipeline` project) orchestrates builds via Modu
 ## Architecture
 
 **Core library** (`AsyncSemaphore/`, namespace `Semaphores`):
-- `AsyncSemaphore` — sealed class implementing `IAsyncSemaphore`. Custom lock-free core (no `SemaphoreSlim`): an `Interlocked` counter where negative values represent queued waiters, a `ConcurrentQueue` of pooled `IValueTaskSource` waiter nodes (pooled waiter nodes; each acquisition still allocates release state), and CAS-arbitrated cancellation/timeout. Cancelled nodes stay queued as dead entries; a release settles them via a compensation increment. Returns `AsyncSemaphoreReleaser` from `WaitAsync()` overloads.
+- `AsyncSemaphore` — sealed class implementing `IAsyncSemaphore`. Uncontended waits/releases use a CAS counter. Contended enqueue, handoff, and cancellation share a lock protecting a linked waiter queue. Cancellation removes its own node and debt immediately. Successful waits reuse waiter nodes with a bounded shared pool (256), a single shared cache slot, and one thread-local slot per thread. Acquisitions allocate shared release state.
 - `AsyncSemaphoreReleaser` — readonly struct implementing `IDisposable`. Each acquisition allocates shared release state; an atomic exchange guarantees at-most-once release across copied, boxed, and concurrently disposed handles. Release state must not be pooled because stale copies can outlive later acquisitions.
 - `IAsyncSemaphore` — interface for DI/mocking.
 

@@ -7,8 +7,8 @@ using TUnit.Assertions.Enums;
 namespace AsyncSemaphore.UnitTests;
 
 /// <summary>
-/// Stress tests targeting the lock-free core: the fast-path CAS, the decrement-to-enqueue
-/// commit window, the claim/cancel CAS, dead-node settlement, and the waiter node pools.
+/// Stress tests targeting the fast-path CAS, removable waiter queue,
+/// claim/cancel races, permit accounting, and the waiter node pools.
 /// </summary>
 public class ContentionTests
 {
@@ -343,7 +343,7 @@ public class ContentionTests
         cts.Cancel();
         await WhenAllWithTimeout(doomedWaiters);
 
-        // The dead nodes are still queued; releasing must settle them and still reach every live waiter
+        // Cancelled nodes have been removed; releasing must still reach every live waiter
         await Task.Run(holder.Dispose);
 
         await WhenAllWithTimeout(liveWaiters);
