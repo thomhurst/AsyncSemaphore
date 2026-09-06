@@ -11,9 +11,6 @@ namespace Semaphores.Analyzers;
 public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
 {
     private const string CommonApiMethodName = "WaitAsync";
-    private const string CommonNamespace = "Semaphores";
-
-    private static readonly string[] ValidTypeNames = ["AsyncSemaphore", "IAsyncSemaphore"];
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
         ImmutableArray.Create(Rules.AwaitRule, Rules.VariableAssignmentRule, Rules.UsingKeywordRule);
@@ -47,62 +44,121 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
 
         var receiverType = methodSymbol.ReceiverType;
 
-        if (!IsTargetType(receiverType))
+        if (!IsTargetType(receiverType, context.Compilation))
         {
             return;
         }
 
-        var parentStatement = GetParentStatement(invocationSyntax);
+        var location = (GetParentStatement(invocationSyntax) ?? invocationSyntax).GetLocation();
+        IOperation value = SkipWrappers(invocationOperation);
 
-        if (parentStatement is null)
+        // Only known task adapters preserve ownership of this acquisition. An await elsewhere
+        // in a condition, argument, or lambda does not consume this particular ValueTask.
+        while (value.Parent is IInvocationOperation adapter
+               && adapter.Instance == value
+               && IsTaskAdapter(adapter.TargetMethod, context.Compilation))
+        {
+            value = SkipWrappers(adapter);
+        }
+
+        if (value.Parent is not IAwaitOperation awaited || awaited.Operation != value)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Rules.AwaitRule, location));
+            return;
+        }
+
+        var result = FollowHandleValue(awaited).Syntax;
+        // Parentheses may not have their own operation in every compiler version.
+        while (result.Parent is ParenthesizedExpressionSyntax)
+        {
+            result = result.Parent;
+        }
+
+        if (result.Parent is UsingStatementSyntax scoped && scoped.Expression == result)
         {
             return;
         }
 
-        var descendantNodes = parentStatement.DescendantNodes().ToList();
-        var descendantTokens = parentStatement.DescendantTokens().ToList();
-
-        if (!descendantNodes.Any(x => x is AwaitExpressionSyntax))
+        if (result.Parent is EqualsValueClauseSyntax initializer
+            && initializer.Parent is VariableDeclaratorSyntax declarator
+            && declarator.Parent is VariableDeclarationSyntax declaration)
         {
-            context.ReportDiagnostic(Diagnostic.Create(Rules.AwaitRule,
-                parentStatement.GetLocation()));
+            if (declaration.Parent is LocalDeclarationStatementSyntax local
+                && local.UsingKeyword.IsKind(SyntaxKind.UsingKeyword)
+                || declaration.Parent is UsingStatementSyntax)
+            {
+                return;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(Rules.UsingKeywordRule, location));
             return;
         }
 
-        if (descendantTokens.Any(x => x.IsKind(SyntaxKind.UsingKeyword)))
-        {
-            // We're correct disposing it on scope exit
-            return;
-        }
-
-        if (!descendantNodes.Any(x => x is VariableDeclarationSyntax))
-        {
-            context.ReportDiagnostic(Diagnostic.Create(Rules.VariableAssignmentRule,
-                parentStatement.GetLocation()));
-            return;
-        }
-
-        context.ReportDiagnostic(Diagnostic.Create(Rules.UsingKeywordRule,
-                parentStatement.GetLocation()));
+        context.ReportDiagnostic(Diagnostic.Create(Rules.VariableAssignmentRule, location));
     }
 
-    private static bool IsTargetType(ITypeSymbol? type)
+    private static IOperation SkipWrappers(IOperation value)
+    {
+        while (value.Parent is IConversionOperation { OperatorMethod: null }
+               or IParenthesizedOperation)
+        {
+            value = value.Parent;
+        }
+
+        return value;
+    }
+
+    private static IOperation FollowHandleValue(IOperation value)
+    {
+        while (true)
+        {
+            value = SkipWrappers(value);
+            if (value.Parent is IConditionalOperation conditional
+                && (conditional.WhenTrue == value || conditional.WhenFalse == value))
+            {
+                value = conditional;
+            }
+            else if (value.Parent is ISwitchExpressionArmOperation arm
+                     && arm.Value == value && arm.Parent is ISwitchExpressionOperation selection)
+            {
+                value = selection;
+            }
+            else
+            {
+                return value;
+            }
+        }
+    }
+
+    private static bool IsTaskAdapter(IMethodSymbol method, Compilation compilation)
+    {
+        var type = method.ContainingType.OriginalDefinition;
+        var valueTask = compilation.GetTypeByMetadataName("System.Threading.Tasks.ValueTask`1");
+        var task = compilation.GetTypeByMetadataName("System.Threading.Tasks.Task`1");
+        return (method.Name is "ConfigureAwait" or "AsTask"
+                && SymbolEqualityComparer.Default.Equals(type, valueTask))
+               || (method.Name == "ConfigureAwait"
+                   && SymbolEqualityComparer.Default.Equals(type, task));
+    }
+
+    private static bool IsTargetType(ITypeSymbol? type, Compilation compilation)
     {
         if (type is null)
         {
             return false;
         }
 
-        if (type.ContainingNamespace?.Name == CommonNamespace
-            && ValidTypeNames.Contains(type.Name))
+        var semaphore = compilation.GetTypeByMetadataName("Semaphores.AsyncSemaphore");
+        var semaphoreInterface = compilation.GetTypeByMetadataName("Semaphores.IAsyncSemaphore");
+        if (SymbolEqualityComparer.Default.Equals(type, semaphore)
+            || SymbolEqualityComparer.Default.Equals(type, semaphoreInterface))
         {
             return true;
         }
 
         foreach (var iface in type.AllInterfaces)
         {
-            if (iface.ContainingNamespace?.Name == CommonNamespace
-                && iface.Name == "IAsyncSemaphore")
+            if (SymbolEqualityComparer.Default.Equals(iface, semaphoreInterface))
             {
                 return true;
             }
