@@ -28,8 +28,8 @@ The CI pipeline (`AsyncSemaphore.Pipeline` project) orchestrates builds via Modu
 ## Architecture
 
 **Core library** (`AsyncSemaphore/`, namespace `Semaphores`):
-- `AsyncSemaphore` — sealed class implementing `IAsyncSemaphore`. Custom lock-free core (no `SemaphoreSlim`): an `Interlocked` counter where negative values represent queued waiters, a `ConcurrentQueue` of pooled `IValueTaskSource` waiter nodes (zero allocation, contended or not), and CAS-arbitrated cancellation/timeout. Cancelled nodes stay queued as dead entries; a release settles them via a compensation increment. Returns `AsyncSemaphoreReleaser` from `WaitAsync()` overloads.
-- `AsyncSemaphoreReleaser` — **struct** implementing `IDisposable`. A plain read-then-clear of the semaphore field makes a repeated `Dispose` of the same struct a no-op with no interlocked cost (the interlocked publish is `Release()` itself; copies of the struct are not protected). Zero-allocation design.
+- `AsyncSemaphore` — sealed class implementing `IAsyncSemaphore`. Custom lock-free core (no `SemaphoreSlim`): an `Interlocked` counter where negative values represent queued waiters, a `ConcurrentQueue` of pooled `IValueTaskSource` waiter nodes (pooled waiter nodes; each acquisition still allocates release state), and CAS-arbitrated cancellation/timeout. Cancelled nodes stay queued as dead entries; a release settles them via a compensation increment. Returns `AsyncSemaphoreReleaser` from `WaitAsync()` overloads.
+- `AsyncSemaphoreReleaser` — readonly struct implementing `IDisposable`. Each acquisition allocates shared release state; an atomic exchange guarantees at-most-once release across copied, boxed, and concurrently disposed handles. Release state must not be pooled because stale copies can outlive later acquisitions.
 - `IAsyncSemaphore` — interface for DI/mocking.
 
 **Roslyn analyzers** (`AsyncSemaphore.Analyzers/AsyncSemaphore.Analyzers/`):

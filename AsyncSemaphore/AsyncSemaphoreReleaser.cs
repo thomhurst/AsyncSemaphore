@@ -2,27 +2,37 @@ using System.Runtime.CompilerServices;
 
 namespace Semaphores;
 
-public struct AsyncSemaphoreReleaser : IDisposable
+/// <summary>Releases an acquired permit at most once, including when the handle is copied or boxed.</summary>
+public readonly struct AsyncSemaphoreReleaser : IDisposable
 {
-    private AsyncSemaphore? _semaphore;
+    private readonly ReleaseState? _state;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal AsyncSemaphoreReleaser(AsyncSemaphore semaphore)
     {
-        _semaphore = semaphore;
+        _state = new ReleaseState(semaphore);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Dispose()
     {
-        // A plain read-then-clear keeps a repeated Dispose of the same struct a no-op without paying for
-        // an interlocked exchange on every release; the interlocked publish is Release() itself.
-        var semaphore = _semaphore;
+        _state?.Dispose();
+    }
 
-        if (semaphore is not null)
+    // Copies must share the release decision. This state cannot be pooled: an arbitrarily old
+    // copy may still be disposed after a later acquisition has started.
+    private sealed class ReleaseState
+    {
+        private AsyncSemaphore? _semaphore;
+
+        public ReleaseState(AsyncSemaphore semaphore)
         {
-            _semaphore = null;
-            semaphore.Release();
+            _semaphore = semaphore;
+        }
+
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref _semaphore, null)?.Release();
         }
     }
 }
