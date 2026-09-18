@@ -5,16 +5,38 @@
         <LangVersion>latest</LangVersion>
         <RootNamespace>Semaphores</RootNamespace>
         <Version>99</Version>
+        <AnalyzerProject>..\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.csproj</AnalyzerProject>
     </PropertyGroup>
 
-    <ItemGroup Condition="'$(GITHUB_ACTIONS)' != 'true'">
-        <ProjectReference Include="..\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.csproj"
-                          OutputItemType="Analyzer" ReferenceOutputAssembly="false"/>
+    <!--
+      PrivateAssets="all" keeps AsyncSemaphore.Analyzers out of the produced package's
+      dependency list. The analyzer assembly itself is packed below under analyzers/dotnet/cs,
+      which is the only folder NuGet loads analyzers from.
+    -->
+    <ItemGroup>
+        <ProjectReference Include="$(AnalyzerProject)"
+                          OutputItemType="Analyzer"
+                          ReferenceOutputAssembly="false"
+                          PrivateAssets="all"/>
     </ItemGroup>
 
-    <ItemGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
-        <ProjectReference Include="..\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.csproj" />
-    </ItemGroup>
+    <PropertyGroup>
+        <BeforePack>$(BeforePack);IncludeAnalyzerInPackage</BeforePack>
+    </PropertyGroup>
+
+    <Target Name="IncludeAnalyzerInPackage">
+        <MSBuild Projects="$(AnalyzerProject)"
+                 Targets="GetTargetPath"
+                 Properties="Configuration=$(Configuration)">
+            <Output TaskParameter="TargetOutputs" ItemName="AnalyzerPackageAssembly"/>
+        </MSBuild>
+        <ItemGroup>
+            <None Include="@(AnalyzerPackageAssembly)"
+                  Pack="true"
+                  PackagePath="analyzers/dotnet/cs"
+                  Visible="false"/>
+        </ItemGroup>
+    </Target>
 
     <ItemGroup>
       <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
