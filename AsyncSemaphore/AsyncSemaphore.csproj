@@ -5,6 +5,7 @@
         <LangVersion>latest</LangVersion>
         <RootNamespace>Semaphores</RootNamespace>
         <Version>99</Version>
+        <AnalyzerProject>..\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.csproj</AnalyzerProject>
     </PropertyGroup>
 
     <!--
@@ -13,14 +14,18 @@
       which is the only folder NuGet loads analyzers from.
     -->
     <ItemGroup>
-        <ProjectReference Include="..\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.csproj"
+        <ProjectReference Include="$(AnalyzerProject)"
                           OutputItemType="Analyzer"
                           ReferenceOutputAssembly="false"
                           PrivateAssets="all"/>
     </ItemGroup>
 
-    <Target Name="IncludeAnalyzerInPackage" BeforeTargets="_GetPackageFiles">
-        <MSBuild Projects="..\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.csproj"
+    <PropertyGroup>
+        <BeforePack>$(BeforePack);IncludeAnalyzerInPackage</BeforePack>
+    </PropertyGroup>
+
+    <Target Name="IncludeAnalyzerInPackage">
+        <MSBuild Projects="$(AnalyzerProject)"
                  Targets="GetTargetPath"
                  Properties="Configuration=$(Configuration)">
             <Output TaskParameter="TargetOutputs" ItemName="AnalyzerPackageAssembly"/>
