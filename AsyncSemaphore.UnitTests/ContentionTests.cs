@@ -674,6 +674,35 @@ public class ContentionTests
         await Assert.That(semaphore.CurrentCount).IsEqualTo(0);
     }
 
+    [Test]
+    [MethodDataSource(nameof(PermitCounts))]
+    public async Task First_Contention_On_A_Fresh_Semaphore_Loses_No_Waiters(int maxCount)
+    {
+        const int iterations = 500;
+        const int workers = 6;
+
+        // The waiter queue and the node pool are created on first use, so every iteration takes a
+        // fresh semaphore to race their creation between the first waiters and the first release
+        for (var i = 0; i < iterations; i++)
+        {
+            using var semaphore = new Semaphores.AsyncSemaphore(maxCount);
+
+            var holders = await HoldAllPermits(semaphore, maxCount);
+            var acquired = 0;
+
+            var tasks = Enumerable.Range(0, workers).Select(_ => Task.Run(async () =>
+            {
+                using var @lock = await semaphore.WaitAsync();
+                Interlocked.Increment(ref acquired);
+            })).Append(Task.Run(() => ReleaseAll(holders))).ToArray();
+
+            await WhenAllWithTimeout(tasks);
+
+            await Assert.That(acquired).IsEqualTo(workers);
+            await Assert.That(semaphore.CurrentCount).IsEqualTo(maxCount);
+        }
+    }
+
     public static IEnumerable<int> PermitCounts() => [1, 2, 4, 8];
 
     private static async Task<Semaphores.AsyncSemaphoreReleaser[]> HoldAllPermits(Semaphores.AsyncSemaphore semaphore, int maxCount)

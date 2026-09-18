@@ -23,8 +23,10 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     /// </summary>
     private int _count;
 
-    private readonly ConcurrentQueue<Waiter> _waiters = new();
-    private readonly ConcurrentQueue<Waiter> _pool = new();
+    // Both queues are created on first use. Neither is touched until a wait actually contends, and
+    // an empty ConcurrentQueue costs ~840 B, so a gate that never contends pays for neither.
+    private ConcurrentQueue<Waiter>? _waiters;
+    private ConcurrentQueue<Waiter>? _pool;
 
     /// <summary>Single-slot fast cache in front of <see cref="_pool"/> for the common ping-pong case.</summary>
     private Waiter? _pooledWaiter;
@@ -170,12 +172,15 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     /// </summary>
     private void ReleaseNextWaiter()
     {
+        // The committed waiter creates the queue before its decrement, so this only misses on a stale read.
+        var waiters = _waiters ?? CreateQueue(ref _waiters);
+
         while (true)
         {
             Waiter? waiter;
             var spinner = default(SpinWait);
 
-            while (!_waiters.TryDequeue(out waiter))
+            while (!waiters.TryDequeue(out waiter))
             {
                 // A decrement that goes negative is committed to enqueueing, so a node will appear.
                 spinner.SpinOnce();
@@ -197,8 +202,9 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
     private ValueTask<AsyncSemaphoreReleaser> EnqueueWaiter(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        // The node is rented up front so the decrement-to-enqueue window a releaser spin-waits on
-        // stays as small as possible.
+        // The node is rented (and the queue created, on first contention) up front so the
+        // decrement-to-enqueue window a releaser spin-waits on stays as small as possible.
+        var waiters = _waiters ?? CreateQueue(ref _waiters);
         var waiter = RentWaiter();
         var version = waiter.Version;
 
@@ -221,7 +227,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             waiter.ArmCancellation(timeout, cancellationToken);
         }
 
-        _waiters.Enqueue(waiter);
+        waiters.Enqueue(waiter);
 
         return new ValueTask<AsyncSemaphoreReleaser>(waiter, version);
     }
@@ -245,7 +251,9 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             return waiter;
         }
 
-        return _pool.TryDequeue(out waiter) ? waiter : new Waiter();
+        var pool = _pool;
+
+        return pool is not null && pool.TryDequeue(out waiter) ? waiter : new Waiter();
     }
 
     private void ReturnWaiter(Waiter waiter)
@@ -263,8 +271,20 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         if (Volatile.Read(ref _pooledWaiter) is not null
             || Interlocked.CompareExchange(ref _pooledWaiter, waiter, null) is not null)
         {
-            _pool.Enqueue(waiter);
+            (_pool ?? CreateQueue(ref _pool)).Enqueue(waiter);
         }
+    }
+
+    /// <summary>
+    /// Publishes a queue with a CAS so racing creators all end up on the same instance. The field is
+    /// written exactly once, so plain reads elsewhere are safe: a stale null only lands back here.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static ConcurrentQueue<Waiter> CreateQueue(ref ConcurrentQueue<Waiter>? location)
+    {
+        var created = new ConcurrentQueue<Waiter>();
+
+        return Interlocked.CompareExchange(ref location, created, null) ?? created;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

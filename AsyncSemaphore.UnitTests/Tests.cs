@@ -287,6 +287,33 @@ public class Tests
     }
 
     [Test]
+    public async Task Construction_Allocates_Less_Than_SemaphoreSlim()
+    {
+        // Guards the lazy queue creation: eager queues made every instance cost ~1.7 KB
+        var asyncSemaphoreBytes = AllocatedBytesPerInstance(static () => new Semaphores.AsyncSemaphore(1));
+        var semaphoreSlimBytes = AllocatedBytesPerInstance(static () => new SemaphoreSlim(1, 1));
+
+        await Assert.That(asyncSemaphoreBytes).IsLessThan(semaphoreSlimBytes);
+
+        static long AllocatedBytesPerInstance(Func<object> create)
+        {
+            const int instances = 1_000;
+
+            var keepAlive = new object[instances];
+            keepAlive[0] = create();
+
+            var before = GC.GetAllocatedBytesForCurrentThread();
+
+            for (var i = 0; i < instances; i++)
+            {
+                keepAlive[i] = create();
+            }
+
+            return (GC.GetAllocatedBytesForCurrentThread() - before) / instances;
+        }
+    }
+
+    [Test]
     public async Task Zero_Timeout_Throws_Immediately_When_Held()
     {
         using var semaphore = new Semaphores.AsyncSemaphore(1);
