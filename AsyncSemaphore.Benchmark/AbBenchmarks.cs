@@ -5,7 +5,7 @@ using BenchmarkDotNet.Configs;
 namespace AsyncSemaphore.Benchmark;
 
 /// <summary>
-/// Same-run A/B of a frozen snapshot of the core (<see cref="BaselineAsyncSemaphore"/>, commit 66ad5f7)
+/// Same-run A/B of a frozen snapshot of the core (<see cref="BaselineAsyncSemaphore"/>, commit eca783b)
 /// against the working-tree core, so a change can be measured without cross-run noise.
 /// Run with <c>--filter "*AbBenchmarks*"</c>.
 /// </summary>
@@ -23,6 +23,40 @@ public class AbBenchmarks
     private readonly BaselineAsyncSemaphore _old = new(1);
     private readonly Semaphores.AsyncSemaphore _new = new(1);
     private readonly CancellationTokenSource _cts = new();
+
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("Construct")]
+    public BaselineAsyncSemaphore Old_Construct() => new(1);
+
+    [Benchmark]
+    [BenchmarkCategory("Construct")]
+    public Semaphores.AsyncSemaphore New_Construct() => new(1);
+
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("ConstructFirstContention")]
+    public async Task Old_ConstructFirstContention()
+    {
+        // A fresh gate per invoke with a single contended wait, so any first-contention setup cost
+        // is paid inside the measurement instead of being amortised away.
+        var semaphore = new BaselineAsyncSemaphore(1);
+        var holder = await semaphore.WaitAsync();
+        var pending = semaphore.WaitAsync();
+        holder.Dispose();
+        holder = await pending;
+        holder.Dispose();
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("ConstructFirstContention")]
+    public async Task New_ConstructFirstContention()
+    {
+        var semaphore = new Semaphores.AsyncSemaphore(1);
+        var holder = await semaphore.WaitAsync();
+        var pending = semaphore.WaitAsync();
+        holder.Dispose();
+        holder = await pending;
+        holder.Dispose();
+    }
 
     [Benchmark(Baseline = true)]
     [BenchmarkCategory("Uncontended")]

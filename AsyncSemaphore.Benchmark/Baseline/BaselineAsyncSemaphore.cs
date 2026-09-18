@@ -7,12 +7,21 @@ using System.Threading.Tasks.Sources;
 namespace AsyncSemaphore.Benchmark.Baseline;
 
 /// <summary>
-/// Frozen snapshot of the core as of commit 66ad5f7 (lock-free rewrite, before the micro-optimisation
-/// pass), kept so <see cref="AbBenchmarks"/> can A/B the working-tree core against a fixed reference
-/// in the same run. Do not edit; regenerate from a newer commit if a new baseline is wanted.
+/// Frozen snapshot of the core as of commit eca783b (before lazy queue allocation, issue #582), kept so
+/// <see cref="AbBenchmarks"/> can A/B the working-tree core against a fixed reference in the same run.
+/// Do not edit; regenerate from a newer commit if a new baseline is wanted.
 /// </summary>
 public sealed class BaselineAsyncSemaphore
 {
+    /// <summary>
+    /// Smallest tick count whose (truncated) millisecond value is -1, i.e. the lowest timeout
+    /// <see cref="SemaphoreSlim"/> accepts.
+    /// </summary>
+    private const long MinTimeoutTicks = -(2 * TimeSpan.TicksPerMillisecond) + 1;
+
+    /// <summary>Largest tick count whose (truncated) millisecond value still fits in an <see cref="int"/>.</summary>
+    private const long MaxTimeoutTicks = ((int.MaxValue + 1L) * TimeSpan.TicksPerMillisecond) - 1;
+
     /// <summary>
     /// Positive values are available permits. Negative values are outstanding waiters
     /// (each of which has enqueued, or is committed to enqueueing, a node in <see cref="_waiters"/>).
@@ -94,7 +103,7 @@ public sealed class BaselineAsyncSemaphore
         {
             // A zero timeout is a single attempt: fail here without renting a node, arming a timer,
             // or creating waiter debt that a concurrent releaser would have to spin on and settle.
-            return new ValueTask<BaselineReleaser>(Task.FromException<BaselineReleaser>(CreateTimeoutException(timeout)));
+            return TimedOut(timeout);
         }
 
         return EnqueueWaiter(timeout, cancellationToken);
@@ -143,6 +152,7 @@ public sealed class BaselineAsyncSemaphore
     /// <summary>
     /// Returns a permit. Called exactly once per successful acquisition, by <see cref="BaselineReleaser.Dispose"/>.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void Release()
     {
         if (Interlocked.Increment(ref _count) <= 0)
@@ -186,31 +196,21 @@ public sealed class BaselineAsyncSemaphore
 
     private ValueTask<BaselineReleaser> EnqueueWaiter(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        var waiter = t_pooledWaiter;
-
-        if (waiter is not null)
-        {
-            t_pooledWaiter = null;
-        }
-        else if ((waiter = Interlocked.Exchange(ref _pooledWaiter, null)) is null && !_pool.TryDequeue(out waiter))
-        {
-            waiter = new Waiter();
-        }
-
-        waiter.SetOwner(this);
-
+        // The node is rented up front so the decrement-to-enqueue window a releaser spin-waits on
+        // stays as small as possible.
+        var waiter = RentWaiter();
         var version = waiter.Version;
 
         // The decrement is the commit point: a permit may have appeared since the fast path failed.
-        // The node is rented up front so the decrement-to-enqueue window a releaser spin-waits on
-        // stays as small as possible.
         if (Interlocked.Decrement(ref _count) >= 0)
         {
-            // Never armed, still clean.
+            // Never owned or armed, still clean.
             ReturnWaiter(waiter);
 
             return new ValueTask<BaselineReleaser>(new BaselineReleaser(this));
         }
+
+        waiter.SetOwner(this);
 
         // Arm cancellation before enqueueing: a claim can only happen after the enqueue, so the
         // claimer always observes fully-armed timer/registration fields when cleaning them up.
@@ -225,6 +225,28 @@ public sealed class BaselineAsyncSemaphore
         return new ValueTask<BaselineReleaser>(waiter, version);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private Waiter RentWaiter()
+    {
+        var waiter = t_pooledWaiter;
+
+        if (waiter is not null)
+        {
+            t_pooledWaiter = null;
+
+            return waiter;
+        }
+
+        // Test before exchanging so an empty slot costs a read, not a locked write on a shared line.
+        if (Volatile.Read(ref _pooledWaiter) is not null
+            && (waiter = Interlocked.Exchange(ref _pooledWaiter, null)) is not null)
+        {
+            return waiter;
+        }
+
+        return _pool.TryDequeue(out waiter) ? waiter : new Waiter();
+    }
+
     private void ReturnWaiter(Waiter waiter)
     {
         if (t_pooledWaiter is null)
@@ -236,7 +258,9 @@ public sealed class BaselineAsyncSemaphore
             return;
         }
 
-        if (Interlocked.CompareExchange(ref _pooledWaiter, waiter, null) != null)
+        // Test before the CAS so a full slot costs a read, not a failed locked write.
+        if (Volatile.Read(ref _pooledWaiter) is not null
+            || Interlocked.CompareExchange(ref _pooledWaiter, waiter, null) is not null)
         {
             _pool.Enqueue(waiter);
         }
@@ -247,18 +271,41 @@ public sealed class BaselineAsyncSemaphore
     {
         if (_disposed)
         {
-            throw new ObjectDisposedException(nameof(BaselineAsyncSemaphore));
+            ThrowObjectDisposed();
         }
     }
 
+    /// <summary>
+    /// Same contract as <see cref="SemaphoreSlim"/> (<c>(long)timeout.TotalMilliseconds</c> must lie in
+    /// [-1, <see cref="int.MaxValue"/>]) as a single unsigned range compare on the raw ticks, which
+    /// avoids the floating-point conversion on every timed wait.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void ValidateTimeout(TimeSpan timeout)
     {
-        var totalMilliseconds = (long)timeout.TotalMilliseconds;
-
-        if (totalMilliseconds < Timeout.Infinite || totalMilliseconds > int.MaxValue)
+        if (unchecked((ulong)(timeout.Ticks - MinTimeoutTicks)) > unchecked((ulong)(MaxTimeoutTicks - MinTimeoutTicks)))
         {
-            throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "The timeout must be -1 milliseconds (infinite) or a non-negative value <= Int32.MaxValue milliseconds.");
+            ThrowTimeoutOutOfRange(timeout);
         }
+    }
+
+    // Throw and fault helpers are kept out of line so the inlined fast paths stay small.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowObjectDisposed()
+    {
+        throw new ObjectDisposedException(nameof(BaselineAsyncSemaphore));
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowTimeoutOutOfRange(TimeSpan timeout)
+    {
+        throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "The timeout must be -1 milliseconds (infinite) or a non-negative value <= Int32.MaxValue milliseconds.");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static ValueTask<BaselineReleaser> TimedOut(TimeSpan timeout)
+    {
+        return new ValueTask<BaselineReleaser>(Task.FromException<BaselineReleaser>(CreateTimeoutException(timeout)));
     }
 
     private static TimeoutException CreateTimeoutException(TimeSpan timeout)
@@ -322,7 +369,23 @@ public sealed class BaselineAsyncSemaphore
             {
                 // The cancellation callbacks lose the CAS and return immediately, so these cannot deadlock.
                 _cancellationRegistration.Dispose();
-                _timeoutTimer?.Dispose();
+
+                var timer = _timeoutTimer;
+
+                if (timer is not null)
+                {
+#if NETSTANDARD2_0
+                    timer.Dispose();
+#else
+                    // DisposeAsync completes synchronously only when no callback is in flight (it checks
+                    // the callback count under the same lock Fire takes before running one), which proves
+                    // no stale OnTimeout can ever touch this node again, so it is safe to pool.
+                    if (timer.DisposeAsync().IsCompletedSuccessfully)
+                    {
+                        _timeoutTimer = null;
+                    }
+#endif
+                }
             }
 
             _core.SetResult(new BaselineReleaser(_owner));
@@ -336,12 +399,19 @@ public sealed class BaselineAsyncSemaphore
 
             if (cancellationToken.CanBeCanceled)
             {
+#if NETSTANDARD2_0
                 _cancellationRegistration = cancellationToken.Register(CancellationCallback, this);
+#else
+                // The callback only performs a CAS and completes the core, so it needs no ExecutionContext.
+                _cancellationRegistration = cancellationToken.UnsafeRegister(CancellationCallback, this);
+#endif
             }
 
             if (timeout != Timeout.InfiniteTimeSpan && Volatile.Read(ref _state) == StatePending)
             {
-                var timer = new Timer(TimeoutCallback, this, timeout, Timeout.InfiniteTimeSpan);
+                // Integer milliseconds (already validated to fit) so the Timer constructor skips its own
+                // floating-point TimeSpan conversion.
+                var timer = new Timer(TimeoutCallback, this, (int)(timeout.Ticks / TimeSpan.TicksPerMillisecond), Timeout.Infinite);
 
                 _timeoutTimer = timer;
 
@@ -386,10 +456,10 @@ public sealed class BaselineAsyncSemaphore
 
             if (_timeoutTimer is not null)
             {
-                // Timer.Dispose does not wait for an in-flight callback (unlike
-                // CancellationTokenRegistration.Dispose), so a stale OnTimeout may still
-                // hold this node. Dropping it instead of pooling leaves _state at
-                // StateClaimed, so the stale CAS fails without touching a recycled core.
+                // A timer callback was in flight when the claimer disposed the timer (Timer.Dispose
+                // does not wait for it, unlike CancellationTokenRegistration.Dispose), so a stale
+                // OnTimeout may still hold this node. Dropping it instead of pooling leaves _state
+                // at StateClaimed, so the stale CAS fails without touching a recycled core.
                 return result;
             }
 

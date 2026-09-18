@@ -46,6 +46,8 @@ public async Task MyMethod()
 
 Successful acquisitions allocate one small shared release-state object. This ensures that all copies of a handle share the same atomic release decision. Default handles and repeated disposal are harmless; disposing a stale copy cannot release a later acquisition.
 
+Construction is cheap: the waiter queue and the node pool are created on the first contended wait, so a gate that never contends (one per cache entry, stream, or tenant) pays for neither.
+
 Contended waits reuse pooled `IValueTaskSource` nodes. Timed or cancellable waits may additionally allocate timers, registrations, and exceptions. The implementation is not allocation-free.
 
 Run the benchmarks for your workload and runtime:

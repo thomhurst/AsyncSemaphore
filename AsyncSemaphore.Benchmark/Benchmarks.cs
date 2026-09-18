@@ -19,6 +19,14 @@ public class Benchmarks
     private readonly CancellationTokenSource _cts = new();
 
     [Benchmark(Baseline = true)]
+    [BenchmarkCategory("Construct")]
+    public SemaphoreSlim SemaphoreSlim_Construct() => new(1, 1);
+
+    [Benchmark]
+    [BenchmarkCategory("Construct")]
+    public Semaphores.AsyncSemaphore AsyncSemaphore_Construct() => new(1);
+
+    [Benchmark(Baseline = true)]
     [BenchmarkCategory("Uncontended")]
     public async Task SemaphoreSlim()
     {
