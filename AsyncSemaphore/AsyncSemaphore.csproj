@@ -42,6 +42,11 @@
       <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     </ItemGroup>
 
+    <!-- Lets the tests read the waiter debt, so they can tell a wait has queued instead of inferring it from timing. -->
+    <ItemGroup>
+      <InternalsVisibleTo Include="AsyncSemaphore.UnitTests" />
+    </ItemGroup>
+
     <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
       <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.8" />
     </ItemGroup>

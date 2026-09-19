@@ -5,7 +5,7 @@ using BenchmarkDotNet.Configs;
 namespace AsyncSemaphore.Benchmark;
 
 /// <summary>
-/// Same-run A/B of a frozen snapshot of the core (<see cref="BaselineAsyncSemaphore"/>, commit eca783b)
+/// Same-run A/B of a frozen snapshot of the core (<see cref="BaselineAsyncSemaphore"/>, commit d623dea)
 /// against the working-tree core, so a change can be measured without cross-run noise.
 /// Run with <c>--filter "*AbBenchmarks*"</c>.
 /// </summary>

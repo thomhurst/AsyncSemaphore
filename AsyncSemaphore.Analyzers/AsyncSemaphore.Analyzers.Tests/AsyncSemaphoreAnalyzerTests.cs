@@ -180,4 +180,289 @@ public class Program
 
         await Verifier.VerifyAnalyzerAsync(text);
     }
+
+    [Test]
+    public async Task Synchronous_Wait_Must_Assign_Variable()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public void Main()
+    {
+        var semaphore = new AsyncSemaphore(1);
+        {|#0:semaphore.Wait();|}
+    }
+}
+";
+
+        var expected = Verifier.Diagnostic(Rules.VariableAssignmentRule).WithLocation(0);
+
+        await Verifier.VerifyAnalyzerAsync(text, expected);
+    }
+
+    [Test]
+    public async Task Synchronous_Wait_Must_Use_Using_Keyword()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public void Main()
+    {
+        var semaphore = new AsyncSemaphore(1);
+        {|#0:var lockHandle = semaphore.Wait();|}
+    }
+}
+";
+
+        var expected = Verifier.Diagnostic(Rules.UsingKeywordRule).WithLocation(0);
+
+        await Verifier.VerifyAnalyzerAsync(text, expected);
+    }
+
+    [Test]
+    public async Task Synchronous_Wait_Must_Use_Using_Keyword_Via_Interface()
+    {
+        const string text = @"
+using System;
+using Semaphores;
+
+public class Program
+{
+    public void Main()
+    {
+        IAsyncSemaphore semaphore = new AsyncSemaphore(1);
+        {|#0:var lockHandle = semaphore.Wait(TimeSpan.FromSeconds(1));|}
+    }
+}
+";
+
+        var expected = Verifier.Diagnostic(Rules.UsingKeywordRule).WithLocation(0);
+
+        await Verifier.VerifyAnalyzerAsync(text, expected);
+    }
+
+    [Test]
+    public async Task Synchronous_Wait_No_Error_Flagged()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public void Main()
+    {
+        var semaphore = new AsyncSemaphore(1);
+        using var lockHandle = semaphore.Wait();
+    }
+}
+";
+
+        await Verifier.VerifyAnalyzerAsync(text);
+    }
+
+    [Test]
+    public async Task Synchronous_Wait_No_Error_Flagged_When_Scoped()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public void Main()
+    {
+        var semaphore = new AsyncSemaphore(1);
+        using (semaphore.Wait())
+        {
+        }
+    }
+}
+";
+
+        await Verifier.VerifyAnalyzerAsync(text);
+    }
+
+    [Test]
+    public async Task No_Error_For_Unrelated_Wait_On_An_Implementer()
+    {
+        const string text = @"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Semaphores;
+
+public class Decorator : IAsyncSemaphore
+{
+    public ValueTask<AsyncSemaphoreReleaser> WaitAsync() => default;
+    public ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout) => default;
+    public ValueTask<AsyncSemaphoreReleaser> WaitAsync(CancellationToken cancellationToken) => default;
+    public ValueTask<AsyncSemaphoreReleaser> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken) => default;
+    public bool TryWait(out AsyncSemaphoreReleaser releaser) { releaser = default; return false; }
+    public AsyncSemaphoreReleaser Wait(CancellationToken cancellationToken = default) => default;
+    public AsyncSemaphoreReleaser Wait(TimeSpan timeout, CancellationToken cancellationToken = default) => default;
+    public int CurrentCount => 0;
+    public void Dispose() { }
+
+    public bool Wait(int attempts) => attempts > 0;
+}
+
+public class Program
+{
+    public void Main()
+    {
+        var semaphore = new Decorator();
+        semaphore.Wait(3);
+    }
+}
+";
+
+        await Verifier.VerifyAnalyzerAsync(text);
+    }
+
+    [Test]
+    public async Task TryWait_No_Error_Flagged()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public void Main()
+    {
+        var semaphore = new AsyncSemaphore(1);
+
+        if (semaphore.TryWait(out var lockHandle))
+        {
+            using (lockHandle)
+            {
+            }
+        }
+    }
+}
+";
+
+        await Verifier.VerifyAnalyzerAsync(text);
+    }
+
+    [Test]
+    public async Task TryWait_Guard_Clause_No_Error_Flagged()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public bool Main()
+    {
+        IAsyncSemaphore semaphore = new AsyncSemaphore(1);
+
+        if (!semaphore.TryWait(out var lockHandle))
+        {
+            return false;
+        }
+
+        using (lockHandle)
+        {
+            return true;
+        }
+    }
+}
+";
+
+        await Verifier.VerifyAnalyzerAsync(text);
+    }
+
+    [Test]
+    public async Task TryWait_Into_An_Existing_Variable_No_Error_Flagged()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    private AsyncSemaphoreReleaser _lockHandle;
+
+    public bool Main()
+    {
+        var semaphore = new AsyncSemaphore(1);
+
+        return semaphore.TryWait(out _lockHandle);
+    }
+}
+";
+
+        await Verifier.VerifyAnalyzerAsync(text);
+    }
+
+    [Test]
+    public async Task TryWait_Discarded_Handle_Must_Assign_Variable()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public bool Main()
+    {
+        var semaphore = new AsyncSemaphore(1);
+
+        return {|#0:semaphore.TryWait(out _)|};
+    }
+}
+";
+
+        var expected = Verifier.Diagnostic(Rules.VariableAssignmentRule).WithLocation(0);
+
+        await Verifier.VerifyAnalyzerAsync(text, expected);
+    }
+
+    [Test]
+    public async Task TryWait_Handle_Never_Read_Must_Use_Using_Keyword()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public void Main()
+    {
+        IAsyncSemaphore semaphore = new AsyncSemaphore(1);
+
+        if ({|#0:semaphore.TryWait(out var lockHandle)|})
+        {
+        }
+    }
+}
+";
+
+        var expected = Verifier.Diagnostic(Rules.UsingKeywordRule).WithLocation(0);
+
+        await Verifier.VerifyAnalyzerAsync(text, expected);
+    }
+
+    [Test]
+    public async Task Unpaired_Semaphore_No_Error_Flagged()
+    {
+        const string text = @"
+using System.Threading.Tasks;
+using Semaphores;
+
+public class Program
+{
+    public async Task Main()
+    {
+        var semaphore = new UnpairedAsyncSemaphore(0);
+        semaphore.Release();
+        await semaphore.WaitAsync();
+        semaphore.Release();
+        semaphore.Wait();
+    }
+}
+";
+
+        await Verifier.VerifyAnalyzerAsync(text);
+    }
 }
