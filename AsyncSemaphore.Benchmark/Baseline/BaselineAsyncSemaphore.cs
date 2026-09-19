@@ -1,15 +1,16 @@
 #pragma warning disable SEM0001
 
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks.Sources;
 
 namespace AsyncSemaphore.Benchmark.Baseline;
 
 /// <summary>
-/// Frozen snapshot of the core as of commit d623dea (before TryWait, the blocking Wait and the unpaired
-/// semaphore, issue #581), kept so <see cref="AbBenchmarks"/> can A/B the working-tree core against a
-/// fixed reference in the same run. Do not edit; regenerate from a newer commit if a new baseline is wanted.
+/// Frozen snapshot of the core as of commit 6a827ec (per-instance overflow pool, before the shared one
+/// of issue #589), kept so <see cref="AbBenchmarks"/> can A/B the working-tree core against a fixed
+/// reference in the same run. Do not edit; regenerate from a newer commit if a new baseline is wanted.
 /// </summary>
 public sealed class BaselineAsyncSemaphore
 {
@@ -21,6 +22,11 @@ public sealed class BaselineAsyncSemaphore
 
     /// <summary>Largest tick count whose (truncated) millisecond value still fits in an <see cref="int"/>.</summary>
     private const long MaxTimeoutTicks = ((int.MaxValue + 1L) * TimeSpan.TicksPerMillisecond) - 1;
+
+#if !NETSTANDARD2_0
+    /// <summary>Spins a blocking wait makes on the fast path before it parks its thread.</summary>
+    private const int SpinCountBeforeBlocking = 35 * 4;
+#endif
 
     /// <summary>
     /// Positive values are available permits. Negative values are outstanding waiters
@@ -46,6 +52,12 @@ public sealed class BaselineAsyncSemaphore
 
     private bool _disposed;
 
+    /// <summary>
+    /// Set only on the instance behind an <see cref="Semaphores.UnpairedAsyncSemaphore"/>. Its acquisitions hand out
+    /// no releaser, because its permits come back through <see cref="ReleaseUnpaired"/> instead.
+    /// </summary>
+    private readonly bool _unpaired;
+
     public BaselineAsyncSemaphore(int maxCount)
     {
         if (maxCount < 1)
@@ -54,6 +66,16 @@ public sealed class BaselineAsyncSemaphore
         }
 
         _count = maxCount;
+    }
+
+    /// <summary>
+    /// Backs an <see cref="Semaphores.UnpairedAsyncSemaphore"/>, which validates the count. Zero is meaningful
+    /// there because a permit can be published without a prior wait.
+    /// </summary>
+    internal BaselineAsyncSemaphore(int initialCount, bool unpaired)
+    {
+        _count = initialCount;
+        _unpaired = unpaired;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -111,6 +133,113 @@ public sealed class BaselineAsyncSemaphore
         return EnqueueWaiter(timeout, cancellationToken);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryWait(out BaselineReleaser releaser)
+    {
+        ThrowIfDisposed();
+
+        if (TryAcquireFast())
+        {
+            releaser = new BaselineReleaser(this);
+
+            return true;
+        }
+
+        // A failed attempt never queues, so it leaves no waiter debt for a releaser to settle.
+        releaser = default;
+
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public BaselineReleaser Wait(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (TryAcquireFast())
+        {
+            return new BaselineReleaser(this);
+        }
+
+        return WaitBlocking(Timeout.InfiniteTimeSpan, cancellationToken);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public BaselineReleaser Wait(TimeSpan timeout, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ValidateTimeout(timeout);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (TryAcquireFast())
+        {
+            return new BaselineReleaser(this);
+        }
+
+        if (timeout == TimeSpan.Zero)
+        {
+            ThrowTimedOut(timeout);
+        }
+
+        return WaitBlocking(timeout, cancellationToken);
+    }
+
+    /// <summary>
+    /// <see cref="Semaphores.UnpairedAsyncSemaphore"/> counterpart of <see cref="WaitAsync(TimeSpan, CancellationToken)"/>:
+    /// the same acquisition, but no releaser is created for it.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal ValueTask WaitUnpairedAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        ValidateTimeout(timeout);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (TryAcquireFast())
+        {
+            return default;
+        }
+
+        if (timeout == TimeSpan.Zero)
+        {
+            return TimedOutUnpaired(timeout);
+        }
+
+        return EnqueueUnpairedWaiter(timeout, cancellationToken);
+    }
+
+    /// <summary><see cref="Semaphores.UnpairedAsyncSemaphore"/> counterpart of <see cref="Wait(TimeSpan, CancellationToken)"/>.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void WaitUnpaired(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        ValidateTimeout(timeout);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (TryAcquireFast())
+        {
+            return;
+        }
+
+        if (timeout == TimeSpan.Zero)
+        {
+            ThrowTimedOut(timeout);
+        }
+
+        // Default in unpaired mode, so there is nothing to keep.
+        _ = WaitBlocking(timeout, cancellationToken);
+    }
+
+    /// <summary><see cref="Semaphores.UnpairedAsyncSemaphore"/> counterpart of <see cref="TryWait"/>.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryWaitUnpaired()
+    {
+        ThrowIfDisposed();
+
+        return TryAcquireFast();
+    }
+
     /// <summary>
     /// Optimistically takes a permit while the count is positive, without ever driving it negative.
     /// Only the slow path's decrement creates waiter debt, which lets it rent its node up front and
@@ -146,6 +275,19 @@ public sealed class BaselineAsyncSemaphore
         }
     }
 
+    /// <summary>
+    /// Waits that have committed to the queue and are not settled yet. Test seam: a wait spins before
+    /// it commits, so a test cannot tell from the outside whether it has queued.
+    /// </summary>
+    internal int QueuedWaiterCount
+    {
+        get
+        {
+            var count = Volatile.Read(ref _count);
+            return count < 0 ? -count : 0;
+        }
+    }
+
     public void Dispose()
     {
         _disposed = true;
@@ -158,6 +300,38 @@ public sealed class BaselineAsyncSemaphore
     internal void Release()
     {
         if (Interlocked.Increment(ref _count) <= 0)
+        {
+            ReleaseNextWaiter();
+        }
+    }
+
+    /// <summary>
+    /// Publishes a permit that no wait handed out. A paired release can never push the count past its
+    /// initial value; an unpaired one can, so the wrap at <see cref="int.MaxValue"/> is guarded here
+    /// (a wrapped count would read as waiter debt and spin in <see cref="ReleaseNextWaiter"/> forever).
+    /// </summary>
+    internal void ReleaseUnpaired()
+    {
+        var count = Volatile.Read(ref _count);
+
+        while (true)
+        {
+            if (count == int.MaxValue)
+            {
+                ThrowSemaphoreFull();
+            }
+
+            var observed = Interlocked.CompareExchange(ref _count, count + 1, count);
+
+            if (observed == count)
+            {
+                break;
+            }
+
+            count = observed;
+        }
+
+        if (count < 0)
         {
             ReleaseNextWaiter();
         }
@@ -201,11 +375,110 @@ public sealed class BaselineAsyncSemaphore
 
     private ValueTask<BaselineReleaser> EnqueueWaiter(TimeSpan timeout, CancellationToken cancellationToken)
     {
+        var waiter = CommitWaiter(timeout, cancellationToken, synchronous: false, out var version);
+
+        return waiter is null
+            ? new ValueTask<BaselineReleaser>(new BaselineReleaser(this))
+            : new ValueTask<BaselineReleaser>(waiter, version);
+    }
+
+    private ValueTask EnqueueUnpairedWaiter(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var waiter = CommitWaiter(timeout, cancellationToken, synchronous: false, out var version);
+
+        return waiter is null ? default : new ValueTask(waiter, version);
+    }
+
+    /// <summary>
+    /// Blocks the calling thread on a queued node. The node is woken inline by whichever thread
+    /// completes it, so a blocked thread never depends on the thread pool to make progress.
+    /// </summary>
+    private BaselineReleaser WaitBlocking(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        // Integer milliseconds, already validated to fit. A finite budget covers the spin and the
+        // commit as well as the park, so its clock starts here.
+        var millisecondsTimeout = (int)(timeout.Ticks / TimeSpan.TicksPerMillisecond);
+        var startTimestamp = millisecondsTimeout > 0 ? Stopwatch.GetTimestamp() : 0;
+
+        // Spin on the fast path before committing to the queue. A parked thread costs a kernel wake-up
+        // per handoff, and once one waiter is queued every release is handed over in queue order, so
+        // threads that park behind a short critical section convoy. Spinning never jumps the queue:
+        // the fast path only succeeds while no waiter is outstanding.
+        var spinner = default(SpinWait);
+
+        while (SpinBeforeBlocking(ref spinner))
+        {
+            if (TryAcquireFast())
+            {
+                return _unpaired ? default : new BaselineReleaser(this);
+            }
+        }
+
+        var waiter = CommitWaiter(timeout, cancellationToken, synchronous: true, out var version);
+
+        if (waiter is null)
+        {
+            return _unpaired ? default : new BaselineReleaser(this);
+        }
+
+        if (millisecondsTimeout > 0)
+        {
+            millisecondsTimeout = RemainingMilliseconds(millisecondsTimeout, Stopwatch.GetTimestamp() - startTimestamp);
+        }
+
+        return waiter.WaitSynchronously(timeout, millisecondsTimeout, cancellationToken, version);
+    }
+
+    /// <summary>
+    /// What is left of a finite budget after <paramref name="elapsedTimestampTicks"/> <see cref="Stopwatch"/>
+    /// ticks. The elapsed time rounds down, so a wait never times out early.
+    /// </summary>
+    internal static int RemainingMilliseconds(int millisecondsTimeout, long elapsedTimestampTicks)
+    {
+        var elapsedMilliseconds = elapsedTimestampTicks * 1000 / Stopwatch.Frequency;
+
+        return elapsedMilliseconds >= millisecondsTimeout ? 0 : millisecondsTimeout - (int)elapsedMilliseconds;
+    }
+
+    /// <summary>Spins once while the budget lasts: the same budget <see cref="SemaphoreSlim"/> spends before it blocks.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool SpinBeforeBlocking(ref SpinWait spinner)
+    {
+#if NETSTANDARD2_0
+        // No overload here can rule out Sleep(1), so stop as soon as SpinWait would start yielding.
+        if (spinner.NextSpinWillYield)
+        {
+            return false;
+        }
+
+        spinner.SpinOnce();
+#else
+        if (spinner.Count >= SpinCountBeforeBlocking)
+        {
+            return false;
+        }
+
+        spinner.SpinOnce(sleep1Threshold: -1);
+#endif
+
+        return true;
+    }
+
+    /// <summary>
+    /// Commits to waiting. Returns the enqueued node and the version its result must be read with, or
+    /// null when the commit decrement found a permit after all. Inlined so that every caller keeps a
+    /// straight-line copy with <paramref name="synchronous"/> folded to a constant.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private Waiter? CommitWaiter(TimeSpan timeout, CancellationToken cancellationToken, bool synchronous, out short version)
+    {
         // The node is rented (and the queue created, on first contention) up front so the
         // decrement-to-enqueue window a releaser spin-waits on stays as small as possible.
         var waiters = _waiters ?? CreateQueue(ref _waiters);
         var waiter = RentWaiter();
-        var version = waiter.Version;
+
+        // Read before the enqueue: afterwards the node can complete and be recycled at any time.
+        version = waiter.Version;
 
         // The decrement is the commit point: a permit may have appeared since the fast path failed.
         if (Interlocked.Decrement(ref _count) >= 0)
@@ -213,22 +486,27 @@ public sealed class BaselineAsyncSemaphore
             // Never owned or armed, still clean.
             ReturnWaiter(waiter);
 
-            return new ValueTask<BaselineReleaser>(new BaselineReleaser(this));
+            return null;
         }
 
         waiter.SetOwner(this);
 
-        // Arm cancellation before enqueueing: a claim can only happen after the enqueue, so the
-        // claimer always observes fully-armed timer/registration fields when cleaning them up.
+        // Arm before enqueueing: a claim can only happen after the enqueue, so the claimer always
+        // observes fully-armed timer/registration fields when cleaning them up, and a blocking
+        // waiter's wake-up is always registered ahead of its completion.
         // If cancellation fires first, the node is enqueued dead and settled by a later release.
-        if (timeout != Timeout.InfiniteTimeSpan || cancellationToken.CanBeCanceled)
+        if (synchronous)
+        {
+            waiter.ArmSynchronous();
+        }
+        else if (timeout != Timeout.InfiniteTimeSpan || cancellationToken.CanBeCanceled)
         {
             waiter.ArmCancellation(timeout, cancellationToken);
         }
 
         waiters.Enqueue(waiter);
 
-        return new ValueTask<BaselineReleaser>(waiter, version);
+        return waiter;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -323,9 +601,27 @@ public sealed class BaselineAsyncSemaphore
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowSemaphoreFull()
+    {
+        throw new SemaphoreFullException();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowTimedOut(TimeSpan timeout)
+    {
+        throw CreateTimeoutException(timeout);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static ValueTask<BaselineReleaser> TimedOut(TimeSpan timeout)
     {
         return new ValueTask<BaselineReleaser>(Task.FromException<BaselineReleaser>(CreateTimeoutException(timeout)));
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static ValueTask TimedOutUnpaired(TimeSpan timeout)
+    {
+        return new ValueTask(Task.FromException(CreateTimeoutException(timeout)));
     }
 
     private static TimeoutException CreateTimeoutException(TimeSpan timeout)
@@ -333,7 +629,7 @@ public sealed class BaselineAsyncSemaphore
         return new TimeoutException($"The semaphore wait exceeded the timeout of {timeout}.");
     }
 
-    private sealed class Waiter : IValueTaskSource<BaselineReleaser>
+    private sealed class Waiter : IValueTaskSource<BaselineReleaser>, IValueTaskSource
     {
         private const int StatePending = 0;
         private const int StateClaimed = 1;
@@ -341,6 +637,7 @@ public sealed class BaselineAsyncSemaphore
 
         private static readonly TimerCallback TimeoutCallback = static state => OnTimeout((Waiter)state!);
         private static readonly Action<object?> CancellationCallback = static state => OnCancelled((Waiter)state!);
+        private static readonly Action<object?> WakeCallback = static state => ((ManualResetEventSlim)state!).Set();
 
         private BaselineAsyncSemaphore _owner = null!;
 
@@ -351,6 +648,9 @@ public sealed class BaselineAsyncSemaphore
         private TimeSpan _timeout;
         private CancellationTokenRegistration _cancellationRegistration;
         private CancellationToken _cancellationToken;
+
+        /// <summary>Created by the first blocking wait on this node, then reused for as long as the node is pooled.</summary>
+        private ManualResetEventSlim? _wakeEvent;
 
         public Waiter()
         {
@@ -408,7 +708,93 @@ public sealed class BaselineAsyncSemaphore
                 }
             }
 
-            _core.SetResult(new BaselineReleaser(_owner));
+            var owner = _owner;
+
+            _core.SetResult(owner._unpaired ? default : new BaselineReleaser(owner));
+        }
+
+        /// <summary>
+        /// Prepares the node for a blocking waiter. Runs before the enqueue, while the core cannot yet
+        /// complete, so the wake-up is always registered ahead of completion and the completing thread
+        /// sets the event inline: no continuation is queued to the thread pool, which a blocked
+        /// caller may be starving.
+        /// </summary>
+        public void ArmSynchronous()
+        {
+            // No timer or registration is armed: the blocked thread times itself out and cancels
+            // itself in WaitSynchronously, racing the claim through the same state CAS. Even a wait
+            // with no timeout or token takes that CAS, because Thread.Interrupt can abandon it.
+            _cancellable = true;
+            _core.RunContinuationsAsynchronously = false;
+            _core.OnCompleted(WakeCallback, _wakeEvent ??= new ManualResetEventSlim(), _core.Version, ValueTaskSourceOnCompletedFlags.None);
+        }
+
+        /// <param name="timeout">The requested budget, reported when the wait times out.</param>
+        /// <param name="millisecondsTimeout">What is left of <paramref name="timeout"/> to park for, or -1 for no limit.</param>
+        public BaselineReleaser WaitSynchronously(TimeSpan timeout, int millisecondsTimeout, CancellationToken cancellationToken, short token)
+        {
+            var wakeEvent = _wakeEvent!;
+            var interrupted = false;
+            bool woken;
+
+            try
+            {
+                woken = wakeEvent.Wait(millisecondsTimeout, cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                // Cancellation, or Thread.Interrupt. The wait may only be abandoned while the node can
+                // still be cancelled; it then stays queued as a dead entry for a later release to settle.
+                if (Interlocked.CompareExchange(ref _state, StateCancelled, StatePending) == StatePending)
+                {
+                    throw;
+                }
+
+                interrupted = exception is ThreadInterruptedException;
+                woken = false;
+            }
+
+            if (!woken)
+            {
+                if (Interlocked.CompareExchange(ref _state, StateCancelled, StatePending) == StatePending)
+                {
+                    throw CreateTimeoutException(timeout);
+                }
+
+                // A releaser claimed the node first, so the permit is ours and completion is imminent.
+                // It has to be collected even through an interrupt, or it would be lost with the node.
+                while (true)
+                {
+                    try
+                    {
+                        wakeEvent.Wait();
+
+                        break;
+                    }
+                    catch (ThreadInterruptedException)
+                    {
+                        interrupted = true;
+                    }
+                }
+            }
+
+            // The completing thread has already read the flag and set the event, so the node can go
+            // back to its pooled (asynchronous) shape before GetResult recycles it.
+            wakeEvent.Reset();
+            _core.RunContinuationsAsynchronously = true;
+
+            var result = GetResult(token);
+
+            if (interrupted)
+            {
+                // The acquisition won the race, so the interrupt is left pending for the thread's
+                // next blocking call instead of being swallowed. Re-raised only once the result is in
+                // hand: recycling the node can contend on the pool's lock, and a pending interrupt
+                // surfacing there would take the permit down with it.
+                Thread.CurrentThread.Interrupt();
+            }
+
+            return result;
         }
 
         public void ArmCancellation(TimeSpan timeout, CancellationToken cancellationToken)
@@ -496,6 +882,12 @@ public sealed class BaselineAsyncSemaphore
             _owner.ReturnWaiter(this);
 
             return result;
+        }
+
+        /// <summary>The unpaired wait's view of the same node: same settlement and pooling, no releaser to return.</summary>
+        void IValueTaskSource.GetResult(short token)
+        {
+            GetResult(token);
         }
 
         public ValueTaskSourceStatus GetStatus(short token)

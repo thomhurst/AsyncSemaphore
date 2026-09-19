@@ -18,6 +18,12 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     /// <summary>Largest tick count whose (truncated) millisecond value still fits in an <see cref="int"/>.</summary>
     private const long MaxTimeoutTicks = ((int.MaxValue + 1L) * TimeSpan.TicksPerMillisecond) - 1;
 
+    /// <summary>
+    /// Most nodes the process-wide overflow pool keeps. Caps what a burst of waiters can leave behind
+    /// for the rest of the process; a node returned past it is dropped.
+    /// </summary>
+    internal const int OverflowPoolCapacity = 256;
+
 #if !NETSTANDARD2_0
     /// <summary>Spins a blocking wait makes on the fast path before it parks its thread.</summary>
     private const int SpinCountBeforeBlocking = 35 * 4;
@@ -29,12 +35,11 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     /// </summary>
     private int _count;
 
-    // Both queues are created on first use. Neither is touched until a wait actually contends, and
-    // an empty ConcurrentQueue costs ~840 B, so a gate that never contends pays for neither.
+    // Created on first use. It is not touched until a wait actually contends, and an empty
+    // ConcurrentQueue costs ~840 B, so a gate that never contends does not pay for it.
     private ConcurrentQueue<Waiter>? _waiters;
-    private ConcurrentQueue<Waiter>? _pool;
 
-    /// <summary>Single-slot fast cache in front of <see cref="_pool"/> for the common ping-pong case.</summary>
+    /// <summary>Single-slot fast cache in front of <see cref="OverflowPool"/> for the common ping-pong case.</summary>
     private Waiter? _pooledWaiter;
 
     /// <summary>
@@ -291,6 +296,9 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         }
     }
 
+    /// <summary>Nodes parked in the process-wide overflow pool. Test seam for its retention cap.</summary>
+    internal static int OverflowPoolCount => OverflowPool.Count;
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -532,17 +540,19 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             return waiter;
         }
 
-        var pool = _pool;
-
-        return pool is not null && pool.TryDequeue(out waiter) ? waiter : new Waiter();
+        return OverflowPool.TryRent() ?? new Waiter();
     }
 
     private void ReturnWaiter(Waiter waiter)
     {
+        // A node at rest never points back at a semaphore. The thread-local cache and the overflow
+        // pool outlive this one and would root it. The instance slot would not, but a pooled node is
+        // usually in an older generation than a short-lived gate, and a reference from there keeps
+        // the dead gate and its queue alive until that generation is collected.
+        waiter.ClearOwner();
+
         if (t_pooledWaiter is null)
         {
-            // Un-own the node so a cached node does not root this semaphore from thread-local storage.
-            waiter.ClearOwner();
             t_pooledWaiter = waiter;
 
             return;
@@ -552,13 +562,13 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         if (Volatile.Read(ref _pooledWaiter) is not null
             || Interlocked.CompareExchange(ref _pooledWaiter, waiter, null) is not null)
         {
-            (_pool ?? CreateQueue(ref _pool)).Enqueue(waiter);
+            OverflowPool.Return(waiter);
         }
     }
 
     /// <summary>
-    /// Publishes a queue with a CAS so racing creators all end up on the same instance. The field is
-    /// written exactly once, so plain reads elsewhere are safe: a stale null only lands back here.
+    /// Publishes the waiter queue with a CAS so racing creators all end up on the same instance. The
+    /// field is written exactly once, so plain reads elsewhere are safe: a stale null only lands back here.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static ConcurrentQueue<Waiter> CreateQueue(ref ConcurrentQueue<Waiter>? location)
@@ -631,6 +641,54 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     private static TimeoutException CreateTimeoutException(TimeSpan timeout)
     {
         return new TimeoutException($"The semaphore wait exceeded the timeout of {timeout}.");
+    }
+
+    /// <summary>
+    /// Process-wide overflow behind the thread-local and per-instance slots. A pooled node keeps
+    /// nothing from its last rental, so it can serve any semaphore. Sharing the overflow means a gate
+    /// never builds a queue of its own for it (~840 B, which a short-lived gate paid on its first
+    /// contention), and a node parked here outlives the gate that returned it instead of being
+    /// collected with it.
+    /// </summary>
+    private static class OverflowPool
+    {
+        private static readonly ConcurrentQueue<Waiter> Nodes = new();
+
+        /// <summary>Raised before an enqueue and lowered after a dequeue, so it never undercounts.</summary>
+        private static int s_retained;
+
+        public static int Count => Nodes.Count;
+
+        public static Waiter? TryRent()
+        {
+            // Test before dequeuing so an empty pool costs a read.
+            if (Volatile.Read(ref s_retained) > 0 && Nodes.TryDequeue(out var waiter))
+            {
+                Interlocked.Decrement(ref s_retained);
+
+                return waiter;
+            }
+
+            return null;
+        }
+
+        public static void Return(Waiter waiter)
+        {
+            // Test before reserving so a full pool costs a read. Past the cap the node is dropped.
+            if (Volatile.Read(ref s_retained) >= OverflowPoolCapacity)
+            {
+                return;
+            }
+
+            if (Interlocked.Increment(ref s_retained) > OverflowPoolCapacity)
+            {
+                Interlocked.Decrement(ref s_retained);
+
+                return;
+            }
+
+            Nodes.Enqueue(waiter);
+        }
     }
 
     private sealed class Waiter : IValueTaskSource<AsyncSemaphoreReleaser>, IValueTaskSource

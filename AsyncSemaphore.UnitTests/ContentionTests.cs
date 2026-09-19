@@ -805,7 +805,124 @@ public class ContentionTests
 #pragma warning restore SEM0004
     }
 
+    [Test]
+    public async Task Node_In_The_Overflow_Pool_Does_Not_Keep_Its_Semaphore_Alive()
+    {
+        var collected = false;
+
+        // The overflow pool is shared by every semaphore and lives as long as the process, so a node
+        // parked there with its owner still set would keep that semaphore alive for good
+        var thread = BlockingThread.Start(() =>
+        {
+            var semaphore = OverflowAndAbandon();
+
+            for (var i = 0; i < 5 && semaphore.IsAlive; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+
+            collected = !semaphore.IsAlive;
+        });
+
+        await WhenAllWithTimeout([thread.Completion]);
+
+        await Assert.That(collected).IsTrue();
+
+        // Not inlined, so none of its locals can outlive it in the caller's frame
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        static WeakReference OverflowAndAbandon()
+        {
+            var semaphore = new Semaphores.AsyncSemaphore(1);
+
+            SettleQueuedWaitsOnThisThread(semaphore, waiters: 6);
+
+            return new WeakReference(semaphore);
+        }
+    }
+
+    [Test]
+    public async Task Nodes_That_Overflow_From_One_Semaphore_Serve_Another()
+    {
+        const int rounds = 200;
+        const int waiters = 6;
+
+        using var paired = new Semaphores.AsyncSemaphore(1);
+        using var unpaired = new Semaphores.UnpairedAsyncSemaphore(0);
+
+        // One thread rents and returns everything, so each round pushes nodes through the overflow
+        // pool and the next rents them back for the other kind of semaphore. A node that kept its
+        // last owner, or its last result, would hand a permit to the wrong instance
+        var thread = BlockingThread.Start(() =>
+        {
+            for (var round = 0; round < rounds; round++)
+            {
+                SettleQueuedWaitsOnThisThread(paired, waiters);
+
+                var pending = new ValueTask[waiters];
+
+                for (var i = 0; i < waiters; i++)
+                {
+                    pending[i] = unpaired.WaitAsync();
+                }
+
+                for (var i = 0; i < waiters; i++)
+                {
+                    unpaired.Release();
+                    pending[i].GetAwaiter().GetResult();
+                }
+            }
+        });
+
+        await WhenAllWithTimeout([thread.Completion]);
+
+        await Assert.That(paired.CurrentCount).IsEqualTo(1);
+        await Assert.That(unpaired.CurrentCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Overflow_Pool_Keeps_A_Bounded_Number_Of_Nodes()
+    {
+        using var semaphore = new Semaphores.AsyncSemaphore(1);
+
+        // Far more simultaneous waiters than the pool may keep, all returned by one thread so that
+        // nearly every node overflows
+        var thread = BlockingThread.Start(
+            () => SettleQueuedWaitsOnThisThread(semaphore, waiters: Semaphores.AsyncSemaphore.OverflowPoolCapacity * 4));
+
+        await WhenAllWithTimeout([thread.Completion]);
+
+        await Assert.That(Semaphores.AsyncSemaphore.OverflowPoolCount).IsLessThanOrEqualTo(Semaphores.AsyncSemaphore.OverflowPoolCapacity);
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(1);
+    }
+
     public static IEnumerable<int> PermitCounts() => [1, 2, 4, 8];
+
+    /// <summary>
+    /// Queues <paramref name="waiters"/> waits behind a held permit and settles them one by one, all on
+    /// the calling thread. Each result is read where its node was rented, so the first node returned
+    /// fills the thread's cache, the second the instance slot, and every later one overflows.
+    /// </summary>
+#pragma warning disable SEM0004 // each permit is handed on by hand to complete the next wait in line
+    private static void SettleQueuedWaitsOnThisThread(Semaphores.AsyncSemaphore semaphore, int waiters)
+    {
+        var holder = semaphore.Wait();
+        var pending = new ValueTask<Semaphores.AsyncSemaphoreReleaser>[waiters];
+
+        for (var i = 0; i < waiters; i++)
+        {
+            pending[i] = semaphore.WaitAsync();
+        }
+
+        for (var i = 0; i < waiters; i++)
+        {
+            holder.Dispose();
+            holder = pending[i].GetAwaiter().GetResult();
+        }
+
+        holder.Dispose();
+    }
+#pragma warning restore SEM0004
 
     private static async Task<Semaphores.AsyncSemaphoreReleaser[]> HoldAllPermits(Semaphores.AsyncSemaphore semaphore, int maxCount)
     {
