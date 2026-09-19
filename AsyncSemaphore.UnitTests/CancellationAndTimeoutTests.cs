@@ -161,67 +161,98 @@ public class CancellationAndTimeoutTests
     [Arguments(true)]
     public async Task Cancellation_Landing_While_The_Wait_Is_Still_Arming_Loses_No_Permits(bool withTimeout)
     {
-        const int iterations = 2_000;
-        const int delaySweep = 48;
+        const int iterations = 20_000;
+        const int delaySweep = 32;
 
         using var semaphore = new Semaphores.AsyncSemaphore(1);
 
-        var cancelled = 0;
+        var rejectedUpFront = 0;
+        var cancelledOnceArmed = 0;
 
-        for (var i = 0; i < iterations; i++)
+        // Both sides run on threads of their own and nothing in the loop awaits: the window is a few
+        // instructions wide, and a hop through the pool on either side would miss it by microseconds
+        var racing = BlockingThread.Start(() =>
         {
-            var holder = await semaphore.WaitAsync();
+            using var canceller = new RacingThread();
 
-            using var cts = new CancellationTokenSource();
+            for (var i = 0; i < iterations; i++)
+            {
+                var holder = semaphore.Wait();
 
-            ValueTask<Semaphores.AsyncSemaphoreReleaser> pending = default;
-            var rejectedUpFront = false;
+                using var cts = new CancellationTokenSource();
 
-            // The cancel is swept across the call: before the up-front check, between that check and
-            // the registration, and (with a timeout) between the registration and the timer
-            await Race.Run(
-                () =>
+                // Sweep the cancel across the call from both directions: later and later into it, then
+                // earlier and earlier ahead of it. It lands before the up-front check, between that check
+                // and the registration, and (with a timeout) between the registration and the timer
+                var offset = i % (2 * delaySweep);
+                var cancelDelaySpins = offset < delaySweep ? offset : 0;
+                var waitDelaySpins = offset < delaySweep ? 0 : offset - delaySweep;
+
+                canceller.Fire(cts.Cancel, cancelDelaySpins);
+
+                if (waitDelaySpins > 0)
                 {
-                    try
-                    {
-                        pending = withTimeout
-                            ? semaphore.WaitAsync(LongTimeout, cts.Token)
-                            : semaphore.WaitAsync(cts.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        rejectedUpFront = true;
-                    }
-                },
-                cts.Cancel,
-                secondDelaySpins: i % delaySweep);
+                    Thread.SpinWait(waitDelaySpins);
+                }
 
-            // The token was cancelled before the permit came back, so no outcome but cancellation is valid
-            if (rejectedUpFront)
-            {
-                cancelled++;
-            }
-            else
-            {
+                ValueTask<Semaphores.AsyncSemaphoreReleaser> pending = default;
+                var rejected = false;
+
                 try
                 {
-                    using var unexpected = await pending;
+                    pending = withTimeout
+                        ? semaphore.WaitAsync(LongTimeout, cts.Token)
+                        : semaphore.WaitAsync(cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
-                    cancelled++;
+                    rejected = true;
                 }
+
+                canceller.Join();
+
+                if (rejected)
+                {
+                    rejectedUpFront++;
+                }
+                else
+                {
+                    // Cancel has returned and the permit is still held, so the wait is over already: the
+                    // callback completes it inline, whether the canceller or the registration ran it
+                    Require(pending.IsCompleted, "the wait is still pending after Cancel returned");
+
+                    try
+                    {
+                        pending.GetAwaiter().GetResult().Dispose();
+
+                        Require(false, "the wait acquired a permit that was never released");
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        cancelledOnceArmed++;
+                    }
+                }
+
+                // A wait that was rejected up front never queued; one that armed is queued dead. Either
+                // way this single release must leave exactly one permit and no debt
+                holder.Dispose();
+
+                Require(semaphore.QueuedWaiterCount == 0, $"{semaphore.QueuedWaiterCount} waiters of debt left after the release");
+                Require(semaphore.CurrentCount == 1, $"count is {semaphore.CurrentCount} after the release");
             }
+        });
 
-            // A wait that was rejected up front never queued; one that armed is queued dead. Either
-            // way this single release must leave exactly one permit and no debt
-            holder.Dispose();
+        await WhenAllWithTimeout([racing.Completion]);
 
-            await Assert.That(semaphore.QueuedWaiterCount).IsEqualTo(0);
-            await Assert.That(semaphore.CurrentCount).IsEqualTo(1);
+        await Assert.That(rejectedUpFront + cancelledOnceArmed).IsEqualTo(iterations);
+
+        static void Require(bool condition, string failure)
+        {
+            if (!condition)
+            {
+                throw new InvalidOperationException(failure);
+            }
         }
-
-        await Assert.That(cancelled).IsEqualTo(iterations);
     }
 
     [Test]

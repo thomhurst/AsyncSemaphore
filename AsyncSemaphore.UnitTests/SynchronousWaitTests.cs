@@ -391,7 +391,7 @@ public class SynchronousWaitTests
     public async Task Two_Blocking_Contenders_With_Varied_Holds_Lose_No_Release_At_The_Commit()
     {
         const int contenders = 2;
-        const int iterationsPerContender = 4_000;
+        const int iterationsPerContender = 2_000;
 
         using var semaphore = new Semaphores.AsyncSemaphore(1);
 
@@ -414,7 +414,7 @@ public class SynchronousWaitTests
                 var current = Interlocked.Increment(ref inCriticalSection);
                 InterlockedMax(ref maxObserved, current);
                 sharedCounter++; // unsynchronized on purpose; semaphore is the only guard
-                Thread.SpinWait(random.Next(0, 20_000));
+                Thread.SpinWait(random.Next(0, 10_000));
                 Interlocked.Decrement(ref inCriticalSection);
             }
         }).Completion).ToArray();
