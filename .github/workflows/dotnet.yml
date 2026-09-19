@@ -34,6 +34,9 @@ jobs:
           dotnet-version: |
             9.0.x
             10.0.x
+      - name: Verify package dependency compatibility
+        shell: pwsh
+        run: ./scripts/Test-PackageCompatibility.ps1
       - name: NuGet login
         if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.publish-packages == 'true' }}
         uses: NuGet/login@v1
