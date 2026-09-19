@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
 
@@ -8,6 +9,9 @@ namespace AsyncSemaphore.Benchmark;
 /// that takes a gate twice around a short critical section. <c>FreshGateParallel</c> builds the gate
 /// inside the measurement, so first-contention setup is paid on every invoke;
 /// <c>WarmGateParallel</c> reuses one gate, which leaves only the steady-state parallel handoff.
+/// <c>WorkBetweenParallel</c> puts work that needs no gate between the two acquisitions, as the
+/// integration has it: a waiter resumed on the thread pool goes on to that work, so how long the gate
+/// stays idle between a release and the next critical section decides the result.
 /// Run with <c>--filter "*FreshGateBenchmarks*"</c>.
 /// </summary>
 [MemoryDiagnoser]
@@ -94,6 +98,24 @@ public class FreshGateBenchmarks
         return _entries;
     }
 
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("WorkBetweenParallel")]
+    public int SemaphoreSlim_WorkBetweenParallel()
+    {
+        Parallel.For(0, Workers, worker => SlimWorkBetweenAsync(_warmSlim, worker).AsTask().GetAwaiter().GetResult());
+
+        return _entries;
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("WorkBetweenParallel")]
+    public int AsyncSemaphore_WorkBetweenParallel()
+    {
+        Parallel.For(0, Workers, worker => PairedWorkBetweenAsync(_warmPaired, worker).AsTask().GetAwaiter().GetResult());
+
+        return _entries;
+    }
+
     private async ValueTask<int> NoGateAsync()
     {
         Mutate();
@@ -152,6 +174,66 @@ public class FreshGateBenchmarks
         }
 
         return _entries;
+    }
+
+    private async ValueTask<int> SlimWorkBetweenAsync(SemaphoreSlim gate, int seed)
+    {
+        await gate.WaitAsync().ConfigureAwait(false);
+
+        try
+        {
+            Mutate();
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        var result = WorkOutsideTheGate(seed);
+
+        await gate.WaitAsync().ConfigureAwait(false);
+
+        try
+        {
+            Mutate();
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        return result;
+    }
+
+    private async ValueTask<int> PairedWorkBetweenAsync(Semaphores.AsyncSemaphore gate, int seed)
+    {
+        using (await gate.WaitAsync().ConfigureAwait(false))
+        {
+            Mutate();
+        }
+
+        var result = WorkOutsideTheGate(seed);
+
+        using (await gate.WaitAsync().ConfigureAwait(false))
+        {
+            Mutate();
+        }
+
+        return result;
+    }
+
+    /// <summary>Stands in for building the value the integration publishes: about half a microsecond that needs no gate.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int WorkOutsideTheGate(int seed)
+    {
+        var value = seed;
+
+        for (var i = 0; i < 1_024; i++)
+        {
+            value = (value * 31) + i;
+        }
+
+        return value;
     }
 
     /// <summary>Stands in for the dictionary bookkeeping the integration does under its gate.</summary>

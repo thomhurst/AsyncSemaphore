@@ -5,6 +5,7 @@
 - Tests use TUnit. Roslyn analyzers SEM0001–SEM0004 enforce semaphore usage.
 - Releaser copies must share at-most-once release state. Never pool that state: stale copies can outlive later acquisitions.
 - The only state that is reused is a single-permit gate's own 64-bit epoch. A handle records the epoch it was acquired under and releases only by advancing exactly that value, which is sound because at most one acquisition is outstanding on such a gate. Do not extend it to gates with more permits, and do not shrink the epoch: it must never wrap onto a value a stale copy holds.
+- On a single-permit gate a release publishes the waiter it granted the permit to (`WaiterQueue.InFlight`), and until that waiter's hop to the thread pool starts, an arriving caller may take the permit from it (`TryOvertake`). Exactly one of the hop and the overtaker empties the slot, and the slot only ever names a waiter whose grant is pending on that gate, which is what lets a hop that outlived its own grant run safely against a recycled node. The overtaken waiter goes back on the count as debt and is served by the overtaker's release, ahead of the queue, at most `MaxOvertakes` times. This is sound only because the overtaker then holds the only permit. Do not extend it to gates with more permits or to unpaired ones, nor to waiters that can still be cancelled or time out: claiming one switches that off, and an overtaken grant would sit out a whole critical section without it.
 
 ## Build and test
 

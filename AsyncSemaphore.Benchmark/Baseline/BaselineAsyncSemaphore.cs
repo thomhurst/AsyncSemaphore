@@ -8,8 +8,8 @@ using System.Threading.Tasks.Sources;
 namespace AsyncSemaphore.Benchmark.Baseline;
 
 /// <summary>
-/// Frozen snapshot of the core as of commit 575a0b2 (a release-state object allocated per acquisition,
-/// before the exclusive gate's epoch token of issue #590), kept so <see cref="AbBenchmarks"/> can A/B the
+/// Frozen snapshot of the core as of commit 96f3d58 (every grant handed straight to the head waiter,
+/// before the overtakable grant of issue #589), kept so <see cref="AbBenchmarks"/> can A/B the
 /// working-tree core against a fixed reference in the same run. Do not edit; regenerate from a newer
 /// commit if a new baseline is wanted.
 /// </summary>
@@ -23,6 +23,15 @@ public sealed class BaselineAsyncSemaphore
 
     /// <summary>Largest tick count whose (truncated) millisecond value still fits in an <see cref="int"/>.</summary>
     private const long MaxTimeoutTicks = ((int.MaxValue + 1L) * TimeSpan.TicksPerMillisecond) - 1;
+
+    /// <summary>
+    /// Acquisitions that keep a release state of their own after a blocking wait last started to spin,
+    /// before an exclusive gate goes back to releasing through its epoch.
+    /// </summary>
+    private const byte SpinnerCredit = 64;
+
+    /// <summary><see cref="_spinnerCredit"/> of a gate that never releases through an epoch. Never counted down.</summary>
+    private const byte AlwaysAllocate = byte.MaxValue;
 
     /// <summary>
     /// Most nodes the process-wide overflow pool keeps. Caps what a burst of waiters can leave behind
@@ -64,6 +73,33 @@ public sealed class BaselineAsyncSemaphore
     /// </summary>
     private readonly bool _unpaired;
 
+    /// <summary>
+    /// Generation of an exclusive gate's permit. Exclusive means a single permit with a handle handed
+    /// out for it, so that at most one acquisition is outstanding at a time, which is what lets this
+    /// stand in for the release state that is otherwise allocated per acquisition. A handle records
+    /// the value it was acquired under, and a release has to advance exactly that value: among all
+    /// copies of a handle one release wins, and a copy that outlives its acquisition never matches a
+    /// later one. 64 bits, so it never wraps back onto a value a stale copy still holds.
+    /// </summary>
+    private long _epoch;
+
+    /// <summary>
+    /// Zero while an exclusive gate releases through <see cref="_epoch"/>. Anything else means the
+    /// acquisition gets a release state of its own: <see cref="AlwaysAllocate"/> on a gate that is not
+    /// exclusive, and otherwise what is left of <see cref="SpinnerCredit"/>.
+    /// <para>
+    /// The epoch sits next to <see cref="_count"/>, which a blocking wait reads in a loop while it spins.
+    /// A release through the epoch writes that cache line twice, and spinning readers pull it away in
+    /// between: four blocking threads on one gate measured 15% slower. An allocated state is private to
+    /// the holder's core, so a gate with spinners keeps the release it always had. Queued async waiters
+    /// do not read the line, and for them the epoch measured faster than the allocation. Both kinds of
+    /// handle stay valid side by side, because a handle names the state it releases through and only
+    /// one acquisition is live at a time.
+    /// </para>
+    /// Written without synchronization: a lost update only moves the switch by a few acquisitions.
+    /// </summary>
+    private byte _spinnerCredit;
+
     public BaselineAsyncSemaphore(int maxCount)
     {
         if (maxCount < 1)
@@ -72,6 +108,7 @@ public sealed class BaselineAsyncSemaphore
         }
 
         _count = maxCount;
+        _spinnerCredit = maxCount == 1 ? (byte)0 : AlwaysAllocate;
     }
 
     /// <summary>
@@ -82,6 +119,7 @@ public sealed class BaselineAsyncSemaphore
     {
         _count = initialCount;
         _unpaired = unpaired;
+        _spinnerCredit = AlwaysAllocate;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -129,14 +167,7 @@ public sealed class BaselineAsyncSemaphore
             return new ValueTask<BaselineReleaser>(new BaselineReleaser(this));
         }
 
-        if (timeout == TimeSpan.Zero)
-        {
-            // A zero timeout is a single attempt: fail here without renting a node, arming a timer,
-            // or creating waiter debt that a concurrent releaser would have to spin on and settle.
-            return TimedOut(timeout);
-        }
-
-        return EnqueueWaiter(timeout, cancellationToken);
+        return EnqueueTimedWaiter(timeout, cancellationToken);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -314,6 +345,52 @@ public sealed class BaselineAsyncSemaphore
         }
     }
 
+    /// <summary>Decides how the acquisition being handed out will release: through <see cref="Epoch"/>, or through a state of its own.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TakesEpoch()
+    {
+        var credit = _spinnerCredit;
+
+        if (credit == 0)
+        {
+            return true;
+        }
+
+        if (credit != AlwaysAllocate)
+        {
+            _spinnerCredit = (byte)(credit - 1);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The epoch the permit is held under. Only meaningful to the thread that holds the permit and has
+    /// not published a handle for it yet: nothing can advance the epoch until that handle is disposed.
+    /// </summary>
+    internal long Epoch
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => Volatile.Read(ref _epoch);
+    }
+
+    /// <summary>Whether the next acquisition would release through the epoch. Test seam: nothing else shows which kind of handle was handed out.</summary>
+    internal bool ReleasesThroughEpoch => _spinnerCredit == 0;
+
+    /// <summary>
+    /// <see cref="Release"/> for a handle that took the epoch, called by every copy of it. The exchange is
+    /// the at-most-once decision. It comes before the permit goes back, so whoever takes the permit
+    /// next reads the advanced epoch, and no handle older than that acquisition can match it.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void ReleaseExclusive(long epoch)
+    {
+        if (Interlocked.CompareExchange(ref _epoch, epoch + 1, epoch) == epoch)
+        {
+            Release();
+        }
+    }
+
     /// <summary>
     /// Publishes a permit that no wait handed out. A paired release can never push the count past its
     /// initial value; an unpaired one can, so the wrap at <see cref="int.MaxValue"/> is guarded here
@@ -382,6 +459,17 @@ public sealed class BaselineAsyncSemaphore
         }
     }
 
+    /// <summary>Called by a blocking wait that is about to spin, see <see cref="_spinnerCredit"/>.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void NoteSpinner()
+    {
+        // Test before writing so a gate that is already topped up costs a read on a contended line.
+        if (_spinnerCredit < SpinnerCredit)
+        {
+            _spinnerCredit = SpinnerCredit;
+        }
+    }
+
     private ValueTask<BaselineReleaser> EnqueueWaiter(TimeSpan timeout, CancellationToken cancellationToken)
     {
         var waiter = CommitWaiter(timeout, cancellationToken, synchronous: false, out var version);
@@ -389,6 +477,23 @@ public sealed class BaselineAsyncSemaphore
         return waiter is null
             ? new ValueTask<BaselineReleaser>(new BaselineReleaser(this))
             : new ValueTask<BaselineReleaser>(waiter, version);
+    }
+
+    /// <summary>
+    /// The zero-timeout check lives out here, not in the inlined caller: with a third return there the
+    /// JIT stops keeping the caller's ValueTask in registers and copies it as a block, and reading the
+    /// whole struct back right after its fields were stored one by one stalls on store forwarding.
+    /// </summary>
+    private ValueTask<BaselineReleaser> EnqueueTimedWaiter(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (timeout == TimeSpan.Zero)
+        {
+            // A zero timeout is a single attempt: fail here without renting a node, arming a timer,
+            // or creating waiter debt that a concurrent releaser would have to spin on and settle.
+            return TimedOut(timeout);
+        }
+
+        return EnqueueWaiter(timeout, cancellationToken);
     }
 
     private ValueTask EnqueueUnpairedWaiter(TimeSpan timeout, CancellationToken cancellationToken)
@@ -404,6 +509,8 @@ public sealed class BaselineAsyncSemaphore
     /// </summary>
     private BaselineReleaser WaitBlocking(TimeSpan timeout, CancellationToken cancellationToken)
     {
+        NoteSpinner();
+
         // Integer milliseconds, already validated to fit. A finite budget covers the spin and the
         // commit as well as the park, so its clock starts here.
         var millisecondsTimeout = (int)(timeout.Ticks / TimeSpan.TicksPerMillisecond);

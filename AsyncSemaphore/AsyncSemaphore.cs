@@ -33,6 +33,13 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     /// </summary>
     internal const int OverflowPoolCapacity = 256;
 
+    /// <summary>
+    /// Times a single wait can be overtaken (see <see cref="TryOvertake"/>) before it is handed the
+    /// permit directly. It bounds how far a queued waiter can fall behind callers that arrived after
+    /// it. Measured on the workload of issue #589: most of the gain is there by 16, none past 64.
+    /// </summary>
+    internal const int MaxOvertakes = 16;
+
 #if !NETSTANDARD2_0
     /// <summary>Spins a blocking wait makes on the fast path before it parks its thread.</summary>
     private const int SpinCountBeforeBlocking = 35 * 4;
@@ -46,7 +53,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
     // Created on first use. It is not touched until a wait actually contends, and an empty
     // ConcurrentQueue costs ~840 B, so a gate that never contends does not pay for it.
-    private ConcurrentQueue<Waiter>? _waiters;
+    private WaiterQueue? _waiters;
 
     /// <summary>Single-slot fast cache in front of <see cref="OverflowPool"/> for the common ping-pong case.</summary>
     private Waiter? _pooledWaiter;
@@ -327,6 +334,12 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         }
     }
 
+    /// <summary>
+    /// Whether a grant is published and has been neither collected nor overtaken yet. Test seam: from
+    /// the outside, a grant that was handed over directly looks like one whose hop has already run.
+    /// </summary>
+    internal bool HasPublishedGrant => _waiters?.InFlight is not null;
+
     /// <summary>Nodes parked in the process-wide overflow pool. Test seam for its retention cap.</summary>
     internal static int OverflowPoolCount => OverflowPool.Count;
 
@@ -437,6 +450,18 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         // The committed waiter creates the queue before its decrement, so this only misses on a stale read.
         var waiters = _waiters ?? CreateQueue(ref _waiters);
 
+        // A waiter whose grant was overtaken left the queue before anything that is in it now, so it
+        // goes first. It was claimed when it was dequeued.
+        var overtaken = waiters.Overtaken;
+
+        if (overtaken is not null)
+        {
+            waiters.Overtaken = null;
+            Grant(waiters, overtaken);
+
+            return;
+        }
+
         while (true)
         {
             Waiter? waiter;
@@ -450,7 +475,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
             if (waiter.TryClaim())
             {
-                waiter.SetAcquired();
+                Grant(waiters, waiter);
                 return;
             }
 
@@ -460,6 +485,81 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// Exclusive means a single permit with a handle handed out for it, so at most one acquisition is
+    /// outstanding and only its holder ever releases.
+    /// </summary>
+    private bool IsExclusive
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _spinnerCredit != AlwaysAllocate;
+    }
+
+    /// <summary>
+    /// Hands the permit to a claimed waiter. On an exclusive gate the grant is published while the hop
+    /// that resumes the waiter is on its way, so that <see cref="TryOvertake"/> can use the gate meanwhile.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void Grant(WaiterQueue waiters, Waiter waiter)
+    {
+        if (waiter.CanBeOvertaken && IsExclusive)
+        {
+            PublishGrant(waiters, waiter);
+
+            return;
+        }
+
+        waiter.SetAcquired();
+    }
+
+    /// <summary>Kept out of line so the direct handoff stays as small as it was.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void PublishGrant(WaiterQueue waiters, Waiter waiter)
+    {
+        // Published before the hop is queued, so the hop always finds its own grant or none.
+        Volatile.Write(ref waiters.InFlight, waiter);
+        waiter.QueueGrant();
+    }
+
+    /// <summary>
+    /// Takes the permit from a waiter it was granted to but whose continuation has not started yet.
+    /// <para>
+    /// A granted waiter resumes on the thread pool, and until it does the gate is owned and idle. Behind
+    /// a short critical section that idle time is most of the cost: every caller that arrives in it
+    /// queues, each of them pays the same hop in turn, and the waits convoy. A caller that is already
+    /// running uses the gate in that gap instead. The waiter it overtook is served by its release,
+    /// ahead of the queue, so queued waiters still leave in order, and after
+    /// <see cref="MaxOvertakes"/> times it is handed the permit directly.
+    /// </para>
+    /// Only ever succeeds on an exclusive gate, because nothing else publishes a grant. That is what
+    /// makes the bookkeeping sound: the caller now holds the only permit, so nobody can release until
+    /// it does, and <see cref="WaiterQueue.Overtaken"/> has a single writer and a single reader.
+    /// </summary>
+    private bool TryOvertake()
+    {
+        var waiters = _waiters;
+
+        if (waiters is null)
+        {
+            return false;
+        }
+
+        var waiter = Volatile.Read(ref waiters.InFlight);
+
+        if (waiter is null || Interlocked.CompareExchange(ref waiters.InFlight, null, waiter) != waiter)
+        {
+            return false;
+        }
+
+        // The overtaken waiter goes back on the books as debt, which sends the release of this
+        // acquisition down the slow path, where it finds the waiter.
+        waiter.NoteOvertaken();
+        waiters.Overtaken = waiter;
+        Interlocked.Decrement(ref _count);
+
+        return true;
     }
 
     /// <summary>Called by a blocking wait that is about to spin, see <see cref="_spinnerCredit"/>.</summary>
@@ -475,6 +575,11 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
     private ValueTask<AsyncSemaphoreReleaser> EnqueueWaiter(TimeSpan timeout, CancellationToken cancellationToken)
     {
+        if (TryOvertake())
+        {
+            return new ValueTask<AsyncSemaphoreReleaser>(new AsyncSemaphoreReleaser(this));
+        }
+
         var waiter = CommitWaiter(timeout, cancellationToken, synchronous: false, out var version);
 
         return waiter is null
@@ -527,7 +632,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
         while (SpinBeforeBlocking(ref spinner))
         {
-            if (TryAcquireFast())
+            if (TryAcquireFast() || TryOvertake())
             {
                 return _unpaired ? default : new AsyncSemaphoreReleaser(this);
             }
@@ -678,9 +783,9 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     /// field is written exactly once, so plain reads elsewhere are safe: a stale null only lands back here.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static ConcurrentQueue<Waiter> CreateQueue(ref ConcurrentQueue<Waiter>? location)
+    private static WaiterQueue CreateQueue(ref WaiterQueue? location)
     {
-        var created = new ConcurrentQueue<Waiter>();
+        var created = new WaiterQueue();
 
         return Interlocked.CompareExchange(ref location, created, null) ?? created;
     }
@@ -798,7 +903,29 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         }
     }
 
+    /// <summary>
+    /// The waiter queue, together with the two slots of a grant that can be overtaken. They live here
+    /// and not on the gate, so a gate that never contends does not pay for them.
+    /// </summary>
+    private sealed class WaiterQueue : ConcurrentQueue<Waiter>
+    {
+        /// <summary>
+        /// The waiter an exclusive gate's permit was granted to, until the hop that resumes it starts.
+        /// Emptied by exactly one of that hop and <see cref="TryOvertake"/>, whichever exchanges first.
+        /// It only ever names a waiter whose grant is pending on this gate, which is why a hop that
+        /// outlived its own grant (see <see cref="Waiter.CollectGrant"/>) can still trust it.
+        /// </summary>
+        public Waiter? InFlight;
+
+        /// <summary>The waiter whose grant was overtaken. Written and read only by whoever holds the permit.</summary>
+        public Waiter? Overtaken;
+    }
+
+#if NETSTANDARD2_0
     private sealed class Waiter : IValueTaskSource<AsyncSemaphoreReleaser>, IValueTaskSource
+#else
+    private sealed class Waiter : IValueTaskSource<AsyncSemaphoreReleaser>, IValueTaskSource, IThreadPoolWorkItem
+#endif
     {
         private const int StatePending = 0;
         private const int StateClaimed = 1;
@@ -807,12 +934,22 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         private static readonly TimerCallback TimeoutCallback = static state => OnTimeout((Waiter)state!);
         private static readonly Action<object?> CancellationCallback = static state => OnCancelled((Waiter)state!);
         private static readonly Action<object?> WakeCallback = static state => ((ManualResetEventSlim)state!).Set();
+#if NETSTANDARD2_0
+        private static readonly WaitCallback GrantCallback = static state => ((Waiter)state!).CollectGrant();
+#endif
 
         private AsyncSemaphore _owner = null!;
 
         private ManualResetValueTaskSourceCore<AsyncSemaphoreReleaser> _core;
         private int _state;
         private bool _cancellable;
+
+        /// <summary>Set once a continuation is registered that the core would send to the thread pool.</summary>
+        private bool _resumesOnThreadPool;
+
+        /// <summary>Times a grant to this waiter was overtaken. Touched only by whoever holds the permit at the time.</summary>
+        private byte _overtakes;
+
         private Timer? _timeoutTimer;
         private TimeSpan _timeout;
         private CancellationTokenRegistration _cancellationRegistration;
@@ -842,6 +979,75 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
         public void ClearOwner()
         {
             _owner = null!;
+        }
+
+        /// <summary>
+        /// Whether a grant to this waiter may be published for <see cref="TryOvertake"/>.
+        /// <para>
+        /// Not a waiter that can still be cancelled or time out: claiming it ends that, and an overtaken
+        /// grant would then sit out the overtaker's whole critical section with its timeout switched off.
+        /// That also rules out a blocking waiter, which is woken inline anyway.
+        /// </para>
+        /// And only a waiter whose continuation is registered and bound for the thread pool, since the
+        /// published grant is resumed from a hop of its own. Without a continuation there is nothing to
+        /// hop for: completing on the spot costs nothing and keeps <c>IsCompleted</c> true as soon as the
+        /// release returns. A continuation bound for a captured context would pay the hop on top of its
+        /// own post. The flag is read without synchronization; a stale false only takes the direct path.
+        /// <para>
+        /// And not for ever: past <see cref="MaxOvertakes"/> the waiter is handed the permit directly, which
+        /// nothing can overtake.
+        /// </para>
+        /// </summary>
+        public bool CanBeOvertaken
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => !_cancellable && _resumesOnThreadPool && _overtakes < MaxOvertakes;
+        }
+
+        public void NoteOvertaken()
+        {
+            _overtakes++;
+        }
+
+        /// <summary>Queues the hop that resumes a published grant.</summary>
+        public void QueueGrant()
+        {
+#if NETSTANDARD2_0
+            ThreadPool.UnsafeQueueUserWorkItem(GrantCallback, this);
+#else
+            ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: true);
+#endif
+        }
+
+#if !NETSTANDARD2_0
+        void IThreadPoolWorkItem.Execute()
+        {
+            CollectGrant();
+        }
+#endif
+
+        /// <summary>
+        /// The hop of a published grant: resumes the waiter here, unless the grant was overtaken first.
+        /// <para>
+        /// A hop can outlive its grant. When the grant is overtaken the waiter is served by a later
+        /// release, recycled, and possibly granted again before this runs. So it takes nothing from its
+        /// own past: it asks the gate the node belongs to now whether this node's grant is pending there,
+        /// and winning that exchange is a valid claim whichever release published it. The hop that was
+        /// queued for that grant then loses the exchange and does nothing. A node at rest has no owner.
+        /// </para>
+        /// </summary>
+        private void CollectGrant()
+        {
+            var waiters = _owner?._waiters;
+
+            if (waiters is null || Interlocked.CompareExchange(ref waiters.InFlight, null, this) != this)
+            {
+                return;
+            }
+
+            // Already on the thread pool, so the continuation runs right here. GetResult restores the flag.
+            _core.RunContinuationsAsynchronously = false;
+            SetAcquired();
         }
 
         public bool TryClaim()
@@ -947,10 +1153,9 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
                 }
             }
 
-            // The completing thread has already read the flag and set the event, so the node can go
-            // back to its pooled (asynchronous) shape before GetResult recycles it.
+            // The completing thread has already set the event, so it can be re-armed before GetResult
+            // recycles the node.
             wakeEvent.Reset();
-            _core.RunContinuationsAsynchronously = true;
 
             var result = GetResult(token);
 
@@ -1038,7 +1243,12 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
                 return result;
             }
 
+            // A blocking wait and the hop of a published grant both complete the core inline. The
+            // completing thread has read the flag by now, so the node goes back to its pooled shape.
+            _core.RunContinuationsAsynchronously = true;
             _core.Reset();
+            _resumesOnThreadPool = false;
+            _overtakes = 0;
 
             if (_cancellable)
             {
@@ -1066,6 +1276,14 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
         public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
         {
+            // What the core looks at before it captures a context to resume on. Any context at all counts
+            // here, which errs towards the direct handoff.
+            if ((flags & ValueTaskSourceOnCompletedFlags.UseSchedulingContext) == 0
+                || (SynchronizationContext.Current is null && ReferenceEquals(TaskScheduler.Current, TaskScheduler.Default)))
+            {
+                _resumesOnThreadPool = true;
+            }
+
             _core.OnCompleted(continuation, state, token, flags);
         }
     }
