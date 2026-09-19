@@ -348,6 +348,102 @@ public class Program
     }
 
     [Test]
+    public async Task TryWait_Guard_Clause_No_Error_Flagged()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public bool Main()
+    {
+        IAsyncSemaphore semaphore = new AsyncSemaphore(1);
+
+        if (!semaphore.TryWait(out var lockHandle))
+        {
+            return false;
+        }
+
+        using (lockHandle)
+        {
+            return true;
+        }
+    }
+}
+";
+
+        await Verifier.VerifyAnalyzerAsync(text);
+    }
+
+    [Test]
+    public async Task TryWait_Into_An_Existing_Variable_No_Error_Flagged()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    private AsyncSemaphoreReleaser _lockHandle;
+
+    public bool Main()
+    {
+        var semaphore = new AsyncSemaphore(1);
+
+        return semaphore.TryWait(out _lockHandle);
+    }
+}
+";
+
+        await Verifier.VerifyAnalyzerAsync(text);
+    }
+
+    [Test]
+    public async Task TryWait_Discarded_Handle_Must_Assign_Variable()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public bool Main()
+    {
+        var semaphore = new AsyncSemaphore(1);
+
+        return {|#0:semaphore.TryWait(out _)|};
+    }
+}
+";
+
+        var expected = Verifier.Diagnostic(Rules.VariableAssignmentRule).WithLocation(0);
+
+        await Verifier.VerifyAnalyzerAsync(text, expected);
+    }
+
+    [Test]
+    public async Task TryWait_Handle_Never_Read_Must_Use_Using_Keyword()
+    {
+        const string text = @"
+using Semaphores;
+
+public class Program
+{
+    public void Main()
+    {
+        IAsyncSemaphore semaphore = new AsyncSemaphore(1);
+
+        if ({|#0:semaphore.TryWait(out var lockHandle)|})
+        {
+        }
+    }
+}
+";
+
+        var expected = Verifier.Diagnostic(Rules.UsingKeywordRule).WithLocation(0);
+
+        await Verifier.VerifyAnalyzerAsync(text, expected);
+    }
+
+    [Test]
     public async Task Unpaired_Semaphore_No_Error_Flagged()
     {
         const string text = @"

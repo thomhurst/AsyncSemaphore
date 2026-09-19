@@ -65,6 +65,20 @@ using var lockHandle = _asyncSemaphore.Wait(cancellationToken);
 
 A blocked thread is woken directly by the thread that releases the permit, so it does not depend on the thread pool to make progress.
 
+#### Upgrading a hand-written `IAsyncSemaphore`
+
+`IAsyncSemaphore` gained `TryWait(out AsyncSemaphoreReleaser)`, `Wait(CancellationToken)` and `Wait(TimeSpan, CancellationToken)`. This is a source-breaking change for hand-written implementations: a decorator or a fake no longer compiles until it adds all three. Mocking libraries generate them on their own. A decorator forwards each one to the semaphore it wraps:
+
+```csharp
+public bool TryWait(out AsyncSemaphoreReleaser releaser) => _inner.TryWait(out releaser);
+
+public AsyncSemaphoreReleaser Wait(CancellationToken cancellationToken = default) => _inner.Wait(cancellationToken);
+
+public AsyncSemaphoreReleaser Wait(TimeSpan timeout, CancellationToken cancellationToken = default) => _inner.Wait(timeout, cancellationToken);
+```
+
+A fake that holds no real permits can return a `default` handle from all three, because a default handle releases nothing.
+
 ### Releasing without a prior wait
 
 `AsyncSemaphore` only hands out a release through the handle of a successful wait, which is what lets it guarantee one release per acquisition. When that pairing genuinely does not fit (a wake-up signal, or a permit broker whose ownership is tracked elsewhere), opt in to `UnpairedAsyncSemaphore`:

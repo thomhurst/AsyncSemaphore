@@ -119,6 +119,28 @@ public class SynchronousWaitTests
     }
 
     [Test]
+    [Arguments(100, 0, 100)]
+    [Arguments(100, 30, 70)]
+    [Arguments(100, 100, 0)]
+    [Arguments(100, 5_000, 0)]
+    [Arguments(int.MaxValue, 1, int.MaxValue - 1)]
+    public async Task Time_Spent_Before_Parking_Comes_Out_Of_The_Timeout(int timeout, int elapsed, int expected)
+    {
+        var elapsedTicks = elapsed * System.Diagnostics.Stopwatch.Frequency / 1000;
+
+        await Assert.That(Semaphores.AsyncSemaphore.RemainingMilliseconds(timeout, elapsedTicks)).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task A_Partial_Millisecond_Before_Parking_Never_Shortens_The_Timeout()
+    {
+        // Rounding the elapsed time up would let a wait time out before its budget is spent
+        var justUnderOneMillisecond = (System.Diagnostics.Stopwatch.Frequency / 1000) - 1;
+
+        await Assert.That(Semaphores.AsyncSemaphore.RemainingMilliseconds(100, justUnderOneMillisecond)).IsEqualTo(100);
+    }
+
+    [Test]
     public async Task Wait_Zero_Timeout_Throws_Immediately_When_Held()
     {
         using var semaphore = new Semaphores.AsyncSemaphore(1);

@@ -304,6 +304,42 @@ public class Benchmarks
         })));
     }
 
+    [Benchmark(Baseline = true, OperationsPerInvoke = ParallelWorkers * ParallelOperationsPerWorker)]
+    [BenchmarkCategory("SyncTimeoutParallel")]
+    public Task SemaphoreSlim_SyncTimeoutParallel()
+    {
+        return Task.WhenAll(Enumerable.Range(0, ParallelWorkers).Select(_ => Task.Run(() =>
+        {
+            for (var i = 0; i < ParallelOperationsPerWorker; i++)
+            {
+                _semaphoreSlim.Wait(LongTimeout);
+
+                try
+                {
+                    Thread.Yield();
+                }
+                finally
+                {
+                    _semaphoreSlim.Release();
+                }
+            }
+        })));
+    }
+
+    [Benchmark(OperationsPerInvoke = ParallelWorkers * ParallelOperationsPerWorker)]
+    [BenchmarkCategory("SyncTimeoutParallel")]
+    public Task AsyncSemaphore_SyncTimeoutParallel()
+    {
+        return Task.WhenAll(Enumerable.Range(0, ParallelWorkers).Select(_ => Task.Run(() =>
+        {
+            for (var i = 0; i < ParallelOperationsPerWorker; i++)
+            {
+                using var @lock = _asyncSemaphore.Wait(LongTimeout);
+                Thread.Yield();
+            }
+        })));
+    }
+
     [Benchmark(Baseline = true)]
     [BenchmarkCategory("UnpairedUncontended")]
     public async Task SemaphoreSlim_Unpaired()

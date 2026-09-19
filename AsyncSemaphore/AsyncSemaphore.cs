@@ -1,6 +1,7 @@
 #pragma warning disable SEM0001
 
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks.Sources;
 
@@ -398,6 +399,11 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
     /// </summary>
     private AsyncSemaphoreReleaser WaitBlocking(TimeSpan timeout, CancellationToken cancellationToken)
     {
+        // Integer milliseconds, already validated to fit. A finite budget covers the spin and the
+        // commit as well as the park, so its clock starts here.
+        var millisecondsTimeout = (int)(timeout.Ticks / TimeSpan.TicksPerMillisecond);
+        var startTimestamp = millisecondsTimeout > 0 ? Stopwatch.GetTimestamp() : 0;
+
         // Spin on the fast path before committing to the queue. A parked thread costs a kernel wake-up
         // per handoff, and once one waiter is queued every release is handed over in queue order, so
         // threads that park behind a short critical section convoy. Spinning never jumps the queue:
@@ -419,7 +425,23 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             return _unpaired ? default : new AsyncSemaphoreReleaser(this);
         }
 
-        return waiter.WaitSynchronously(timeout, cancellationToken, version);
+        if (millisecondsTimeout > 0)
+        {
+            millisecondsTimeout = RemainingMilliseconds(millisecondsTimeout, Stopwatch.GetTimestamp() - startTimestamp);
+        }
+
+        return waiter.WaitSynchronously(timeout, millisecondsTimeout, cancellationToken, version);
+    }
+
+    /// <summary>
+    /// What is left of a finite budget after <paramref name="elapsedTimestampTicks"/> <see cref="Stopwatch"/>
+    /// ticks. The elapsed time rounds down, so a wait never times out early.
+    /// </summary>
+    internal static int RemainingMilliseconds(int millisecondsTimeout, long elapsedTimestampTicks)
+    {
+        var elapsedMilliseconds = elapsedTimestampTicks * 1000 / Stopwatch.Frequency;
+
+        return elapsedMilliseconds >= millisecondsTimeout ? 0 : millisecondsTimeout - (int)elapsedMilliseconds;
     }
 
     /// <summary>Spins once while the budget lasts: the same budget <see cref="SemaphoreSlim"/> spends before it blocks.</summary>
@@ -711,7 +733,9 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             _core.OnCompleted(WakeCallback, _wakeEvent ??= new ManualResetEventSlim(), _core.Version, ValueTaskSourceOnCompletedFlags.None);
         }
 
-        public AsyncSemaphoreReleaser WaitSynchronously(TimeSpan timeout, CancellationToken cancellationToken, short token)
+        /// <param name="timeout">The requested budget, reported when the wait times out.</param>
+        /// <param name="millisecondsTimeout">What is left of <paramref name="timeout"/> to park for, or -1 for no limit.</param>
+        public AsyncSemaphoreReleaser WaitSynchronously(TimeSpan timeout, int millisecondsTimeout, CancellationToken cancellationToken, short token)
         {
             var wakeEvent = _wakeEvent!;
             var interrupted = false;
@@ -719,8 +743,7 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
 
             try
             {
-                // Integer milliseconds, already validated to fit.
-                woken = wakeEvent.Wait((int)(timeout.Ticks / TimeSpan.TicksPerMillisecond), cancellationToken);
+                woken = wakeEvent.Wait(millisecondsTimeout, cancellationToken);
             }
             catch (Exception exception)
             {

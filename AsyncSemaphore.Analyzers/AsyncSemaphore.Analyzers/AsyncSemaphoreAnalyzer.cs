@@ -12,6 +12,7 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
 {
     private const string CommonApiMethodName = "WaitAsync";
     private const string SynchronousApiMethodName = "Wait";
+    private const string TryApiMethodName = "TryWait";
     private const string LockHandleTypeName = "AsyncSemaphoreReleaser";
     private const string CommonNamespace = "Semaphores";
 
@@ -40,6 +41,16 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
         }
 
         var methodSymbol = invocationOperation.TargetMethod;
+
+        if (methodSymbol.MethodKind == MethodKind.Ordinary && IsTryWait(methodSymbol))
+        {
+            if (IsTargetType(methodSymbol.ReceiverType))
+            {
+                AnalyzeTryWait(context, invocationOperation);
+            }
+
+            return;
+        }
 
         // The synchronous Wait returns the same lock handle, so it gets the same handle rules minus the await.
         var isAsynchronous = methodSymbol.Name == CommonApiMethodName;
@@ -91,12 +102,76 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
                 parentStatement.GetLocation()));
     }
 
+    // TryWait hands its handle back through an out argument, and its natural shape is a guard clause
+    // followed by a using, so the statement-level checks do not fit. Only a handle that can provably
+    // never be disposed is reported: one that is discarded, or declared inline and never read again.
+    private static void AnalyzeTryWait(OperationAnalysisContext context, IInvocationOperation invocation)
+    {
+        if (invocation.Arguments.Length != 1)
+        {
+            // Code that does not compile yet
+            return;
+        }
+
+        var handle = invocation.Arguments[0].Value;
+
+        if (handle is IDeclarationExpressionOperation declaration)
+        {
+            handle = declaration.Expression;
+        }
+
+        if (handle is IDiscardOperation)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Rules.VariableAssignmentRule,
+                invocation.Syntax.GetLocation()));
+            return;
+        }
+
+        if (handle is not ILocalReferenceOperation { IsDeclaration: true } declared)
+        {
+            // A variable that outlives this call: whoever owns it may dispose it.
+            return;
+        }
+
+        IOperation root = invocation;
+
+        while (root.Parent is not null)
+        {
+            root = root.Parent;
+        }
+
+        foreach (var operation in root.Descendants())
+        {
+            if (operation is ILocalReferenceOperation { IsDeclaration: false } reference
+                && SymbolEqualityComparer.Default.Equals(reference.Local, declared.Local))
+            {
+                return;
+            }
+        }
+
+        context.ReportDiagnostic(Diagnostic.Create(Rules.UsingKeywordRule,
+            invocation.Syntax.GetLocation()));
+    }
+
     // "Wait" is a common name, so an implementer's unrelated Wait overload must not be mistaken for ours.
     private static bool IsSynchronousWait(IMethodSymbol method)
     {
         return method.Name == SynchronousApiMethodName
-               && method.ReturnType.Name == LockHandleTypeName
-               && method.ReturnType.ContainingNamespace?.Name == CommonNamespace;
+               && IsLockHandle(method.ReturnType);
+    }
+
+    private static bool IsTryWait(IMethodSymbol method)
+    {
+        return method.Name == TryApiMethodName
+               && method.Parameters.Length == 1
+               && method.Parameters[0].RefKind == RefKind.Out
+               && IsLockHandle(method.Parameters[0].Type);
+    }
+
+    private static bool IsLockHandle(ITypeSymbol type)
+    {
+        return type.Name == LockHandleTypeName
+               && type.ContainingNamespace?.Name == CommonNamespace;
     }
 
     private static bool IsTargetType(ITypeSymbol? type)
