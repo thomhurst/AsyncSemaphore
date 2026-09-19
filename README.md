@@ -153,7 +153,11 @@ See the [analyzer guide](AsyncSemaphore.Analyzers/AsyncSemaphore.Analyzers/Readm
 
 ## Performance
 
-Successful acquisitions allocate one small shared release-state object. This ensures that all copies of a handle share the same atomic release decision. Default handles and repeated disposal are harmless; disposing a stale copy cannot release a later acquisition.
+All copies of a handle share the same atomic release decision. Default handles and repeated disposal are harmless; disposing a stale copy cannot release a later acquisition.
+
+A gate with a single permit (`new AsyncSemaphore(1)`) holds that decision itself, as a 64-bit epoch that each release advances, so its acquisitions allocate nothing. A handle records the epoch it was acquired under and only that value can release, which keeps the guarantee for copies of any age. While blocking `Wait` callers are spinning on such a gate, and for a short while afterwards, its acquisitions fall back to the allocation below: a state private to the holder releases faster than a shared epoch next to readers that are hammering the count.
+
+A gate with more than one permit can have several acquisitions outstanding at once, so each successful acquisition allocates one small release-state object (24 bytes).
 
 Construction is cheap: the waiter queue is created on the first contended wait, so a gate that never contends (one per cache entry, stream, or tenant) does not pay for it. Waiter nodes that overflow the per-thread and per-instance slots go to one bounded pool shared by every semaphore in the process, so a short-lived gate builds no pool of its own and its nodes outlive it.
 
@@ -164,5 +168,7 @@ Run the benchmarks for your workload and runtime:
 ```shell
 dotnet run --project AsyncSemaphore.Benchmark -c Release -- --filter "*Benchmarks*"
 ```
+
+`PairedAcquisitionBenchmarks` tracks what a paired acquisition costs next to the `SemaphoreSlim` region it replaces, for a single permit and for several.
 
 Earlier measurements of the unprotected struct releaser do not represent the copy-safe implementation.

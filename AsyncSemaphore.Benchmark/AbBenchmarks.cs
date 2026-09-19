@@ -5,7 +5,7 @@ using BenchmarkDotNet.Configs;
 namespace AsyncSemaphore.Benchmark;
 
 /// <summary>
-/// Same-run A/B of a frozen snapshot of the core (<see cref="BaselineAsyncSemaphore"/>, commit 6a827ec)
+/// Same-run A/B of a frozen snapshot of the core (<see cref="BaselineAsyncSemaphore"/>, commit 575a0b2)
 /// against the working-tree core, so a change can be measured without cross-run noise.
 /// Run with <c>--filter "*AbBenchmarks*"</c>.
 /// </summary>
@@ -22,11 +22,17 @@ public class AbBenchmarks
 
     private const int Gates = 2;
 
+    private const int CountedPermits = 4;
+
     private static readonly int FanOutWorkers = Environment.ProcessorCount;
 
     private readonly BaselineAsyncSemaphore _old = new(1);
     private readonly Semaphores.AsyncSemaphore _new = new(1);
     private readonly CancellationTokenSource _cts = new();
+
+    // More than one permit: these handles always release through a state object of their own.
+    private readonly BaselineAsyncSemaphore _oldCounted = new(CountedPermits);
+    private readonly Semaphores.AsyncSemaphore _newCounted = new(CountedPermits);
 
     private readonly BaselineAsyncSemaphore[] _oldGates = [.. Enumerable.Range(0, Gates).Select(_ => new BaselineAsyncSemaphore(1))];
     private readonly Semaphores.AsyncSemaphore[] _newGates = [.. Enumerable.Range(0, Gates).Select(_ => new Semaphores.AsyncSemaphore(1))];
@@ -77,6 +83,90 @@ public class AbBenchmarks
     public async Task New_Uncontended()
     {
         using var _ = await _new.WaitAsync();
+    }
+
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("CountedUncontended")]
+    public async Task Old_CountedUncontended()
+    {
+        using var _ = await _oldCounted.WaitAsync();
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("CountedUncontended")]
+    public async Task New_CountedUncontended()
+    {
+        using var _ = await _newCounted.WaitAsync();
+    }
+
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("TryWait")]
+    public bool Old_TryWait()
+    {
+        if (!_old.TryWait(out var releaser))
+        {
+            return false;
+        }
+
+        releaser.Dispose();
+
+        return true;
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("TryWait")]
+    public bool New_TryWait()
+    {
+        if (!_new.TryWait(out var releaser))
+        {
+            return false;
+        }
+
+        releaser.Dispose();
+
+        return true;
+    }
+
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("SyncUncontended")]
+    public void Old_SyncUncontended()
+    {
+        using var _ = _old.Wait();
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("SyncUncontended")]
+    public void New_SyncUncontended()
+    {
+        using var _ = _new.Wait();
+    }
+
+    [Benchmark(Baseline = true, OperationsPerInvoke = ParallelWorkers * ParallelOperationsPerWorker)]
+    [BenchmarkCategory("SyncParallel")]
+    public Task Old_SyncParallel()
+    {
+        return Task.WhenAll(Enumerable.Range(0, ParallelWorkers).Select(_ => Task.Run(() =>
+        {
+            for (var i = 0; i < ParallelOperationsPerWorker; i++)
+            {
+                using var @lock = _old.Wait();
+                Thread.Yield();
+            }
+        })));
+    }
+
+    [Benchmark(OperationsPerInvoke = ParallelWorkers * ParallelOperationsPerWorker)]
+    [BenchmarkCategory("SyncParallel")]
+    public Task New_SyncParallel()
+    {
+        return Task.WhenAll(Enumerable.Range(0, ParallelWorkers).Select(_ => Task.Run(() =>
+        {
+            for (var i = 0; i < ParallelOperationsPerWorker; i++)
+            {
+                using var @lock = _new.Wait();
+                Thread.Yield();
+            }
+        })));
     }
 
     [Benchmark(Baseline = true)]
