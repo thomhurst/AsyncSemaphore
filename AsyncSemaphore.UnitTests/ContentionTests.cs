@@ -410,7 +410,8 @@ public class ContentionTests
         // Force the slow path so the timer is actually armed
         var pending = semaphore.WaitAsync(TimeSpan.FromMilliseconds(200));
 
-        await Task.Run(holder.Dispose);
+        // Released inline: a release queued to a starved pool can land after the timer has fired
+        holder.Dispose();
 
         using (await pending)
         {
