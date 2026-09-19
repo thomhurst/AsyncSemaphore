@@ -12,6 +12,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.Analyzers.Te
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.Benchmark", "AsyncSemaphore.Benchmark\AsyncSemaphore.Benchmark.csproj", "{F8AC3ADD-4193-431D-853C-510CD061B1E5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncSemaphore.UnitTests.NetStandard", "AsyncSemaphore.UnitTests.NetStandard\AsyncSemaphore.UnitTests.NetStandard.csproj", "{56FE24A9-5A14-4432-8CD2-4C330595B4DA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -42,5 +44,9 @@ Global
 		{F8AC3ADD-4193-431D-853C-510CD061B1E5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F8AC3ADD-4193-431D-853C-510CD061B1E5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F8AC3ADD-4193-431D-853C-510CD061B1E5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{56FE24A9-5A14-4432-8CD2-4C330595B4DA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{56FE24A9-5A14-4432-8CD2-4C330595B4DA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{56FE24A9-5A14-4432-8CD2-4C330595B4DA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{56FE24A9-5A14-4432-8CD2-4C330595B4DA}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

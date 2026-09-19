@@ -41,6 +41,7 @@
     <!-- Lets the tests read the waiter debt, so they can tell a wait has queued instead of inferring it from timing. -->
     <ItemGroup>
       <InternalsVisibleTo Include="AsyncSemaphore.UnitTests" />
+      <InternalsVisibleTo Include="AsyncSemaphore.UnitTests.NetStandard" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">

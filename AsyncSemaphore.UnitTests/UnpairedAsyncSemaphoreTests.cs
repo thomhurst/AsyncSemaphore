@@ -162,6 +162,25 @@ public class UnpairedAsyncSemaphoreTests
     }
 
     [Test]
+    public async Task Timed_Waits_Complete_When_A_Release_Arrives_In_Time()
+    {
+        using var semaphore = new Semaphores.UnpairedAsyncSemaphore(0);
+
+        var asyncWaiter = semaphore.WaitAsync(TimeSpan.FromMinutes(5)).AsTask();
+        var blockingWaiter = BlockingThread.Start(() => semaphore.Wait(TimeSpan.FromMinutes(5)));
+
+        await blockingWaiter.WaitUntilQueued(() => semaphore.QueuedWaiterCount, 2);
+
+        semaphore.Release();
+        semaphore.Release();
+
+        await WhenAllWithTimeout([asyncWaiter, blockingWaiter.Completion]);
+
+        await Assert.That(semaphore.QueuedWaiterCount).IsEqualTo(0);
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Blocking_Cancellation_Throws_OperationCanceledException()
     {
         using var semaphore = new Semaphores.UnpairedAsyncSemaphore(0);
@@ -271,6 +290,89 @@ public class UnpairedAsyncSemaphoreTests
         await WhenAllWithTimeout(asyncWaiters.Concat(blockingWaiters).Concat(releasing).ToArray());
 
         await Assert.That(woken).IsEqualTo(2 * waitersPerFlavor * iterationsPerWorker);
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Release_Landing_Between_The_Fast_Path_And_The_Commit_Is_Consumed_Exactly_Once()
+    {
+        const int maxSignals = 50_000;
+
+        // Every handover is a hop through the pool, which takes as long as the machine and the tests
+        // running next to this one make it take. Bounded by time so a small runner does fewer, not fail
+        var budget = TimeSpan.FromSeconds(5);
+
+        using var semaphore = new Semaphores.UnpairedAsyncSemaphore(0);
+
+        var woken = 0;
+        var stopAt = 0;
+        var published = 0;
+
+        var waiting = Task.Run(async () =>
+        {
+            while (true)
+            {
+                await semaphore.WaitAsync();
+
+                if (Interlocked.Increment(ref woken) == Volatile.Read(ref stopAt))
+                {
+                    return;
+                }
+            }
+        });
+
+        // One signal in flight at a time, published the moment the last one is consumed, so the count
+        // sits at zero as the waiter comes back around. The release then lands before its fast path
+        // (taken there), after its commit (handed over through the queue), or in between, where the
+        // commit decrement itself has to find the permit
+        var releasing = BlockingThread.Start(() =>
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            while (true)
+            {
+                var last = published == maxSignals - 1 || stopwatch.Elapsed > budget;
+
+                if (last)
+                {
+                    // Before the release, so the wake-up it causes already sees it
+                    Volatile.Write(ref stopAt, published + 1);
+                }
+
+                semaphore.Release();
+                published++;
+
+                var spinner = default(SpinWait);
+
+                while (Volatile.Read(ref woken) < published && !waiting.IsCompleted)
+                {
+                    spinner.SpinOnce();
+                }
+
+                if (last)
+                {
+                    return;
+                }
+            }
+        });
+
+        try
+        {
+            await WhenAllWithTimeout([waiting, releasing.Completion]);
+        }
+        catch (TimeoutException)
+        {
+            // Tells a lost wake-up (progress stopped, a waiter still queued) from a run that is merely slow
+            var before = Volatile.Read(ref woken);
+            await Task.Delay(TimeSpan.FromSeconds(2));
+
+            throw new TimeoutException(
+                $"Woke {before} of {Volatile.Read(ref published)} published, then {Volatile.Read(ref woken) - before} more in 2 s; " +
+                $"count {semaphore.CurrentCount}, queued {semaphore.QueuedWaiterCount}.");
+        }
+
+        await Assert.That(woken).IsEqualTo(published);
+        await Assert.That(semaphore.QueuedWaiterCount).IsEqualTo(0);
         await Assert.That(semaphore.CurrentCount).IsEqualTo(0);
     }
 

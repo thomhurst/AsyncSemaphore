@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+      Runs the AsyncSemaphore.UnitTests sources against the netstandard2.0 build of the library. NuGet
+      hands a modern target framework the matching modern build, so without this project none of the
+      code behind NETSTANDARD2_0 (Timer.Dispose instead of DisposeAsync, Register instead of
+      UnsafeRegister, the shorter spin before a blocking wait parks) would ever run under a test.
+    -->
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <OutputType>exe</OutputType>
+        <RootNamespace>AsyncSemaphore.UnitTests</RootNamespace>
+        <DefineConstants>$(DefineConstants);LIBRARY_NETSTANDARD</DefineConstants>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="..\AsyncSemaphore.UnitTests\**\*.cs"
+                 Exclude="..\AsyncSemaphore.UnitTests\bin\**;..\AsyncSemaphore.UnitTests\obj\**"
+                 LinkBase="Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="TUnit" Version="1.68.17" />
+        <!-- The netstandard2.0 build binds to this assembly; restore only sees the library's net10.0 dependencies. -->
+        <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.8" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers\AsyncSemaphore.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+      <ProjectReference Include="..\AsyncSemaphore\AsyncSemaphore.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+    </ItemGroup>
+
+</Project>

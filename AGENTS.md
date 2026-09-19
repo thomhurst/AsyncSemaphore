@@ -9,9 +9,14 @@
 
 ```bash
 dotnet build AsyncSemaphore.sln
-dotnet test --project AsyncSemaphore.UnitTests
+dotnet test --project AsyncSemaphore.UnitTests -c Release
+dotnet test --project AsyncSemaphore.UnitTests.NetStandard -c Release
 dotnet test --project AsyncSemaphore.Analyzers/AsyncSemaphore.Analyzers.Tests
 ```
+
+- `AsyncSemaphore.UnitTests` runs once per framework the library builds for (`-f net10.0` picks one). `AsyncSemaphore.UnitTests.NetStandard` compiles the same sources against the netstandard2.0 build, the only place the `NETSTANDARD2_0` code runs; add test files to `AsyncSemaphore.UnitTests` only.
+- Race tests are probabilistic. Run them in Release, the build that ships. A new guard in the lock-free core needs a test that fails when the guard is removed; check that once by removing it.
+- CI runs the suite on Linux x64, Linux ARM64, Windows and macOS ARM64 (`dotnet.yml`), and `stress.yml` repeats it nightly.
 
 ## Performance validation
 
