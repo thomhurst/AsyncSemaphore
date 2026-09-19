@@ -38,17 +38,17 @@
         </ItemGroup>
     </Target>
 
-    <ItemGroup>
-      <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
-    </ItemGroup>
-
     <!-- Lets the tests read the waiter debt, so they can tell a wait has queued instead of inferring it from timing. -->
     <ItemGroup>
       <InternalsVisibleTo Include="AsyncSemaphore.UnitTests" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
-      <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.8" />
+      <!-- Compatibility floors for ValueTask and ManualResetValueTaskSourceCore<T>.
+           Keep these low so consumers can retain their own dependency pins (#583).
+           Modern .NET targets provide these types in the framework. -->
+      <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
+      <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="6.0.0" />
     </ItemGroup>
 
 </Project>

@@ -2,6 +2,12 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "packageRules": [
     {
+      "description": "Keep the netstandard2.0 compatibility floors; raise only when required APIs change.",
+      "matchFileNames": ["AsyncSemaphore/AsyncSemaphore.csproj"],
+      "matchPackageNames": ["Microsoft.Bcl.AsyncInterfaces", "System.Threading.Tasks.Extensions"],
+      "enabled": false
+    },
+    {
       "matchPackageNames": ["/ModularPipelines/"],
       "groupName": "ModularPipelines"
     }
