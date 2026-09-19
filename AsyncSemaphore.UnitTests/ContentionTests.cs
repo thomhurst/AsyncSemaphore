@@ -410,7 +410,8 @@ public class ContentionTests
         // Force the slow path so the timer is actually armed
         var pending = semaphore.WaitAsync(TimeSpan.FromMilliseconds(200));
 
-        await Task.Run(holder.Dispose);
+        // Released inline: a release queued to a starved pool can land after the timer has fired
+        holder.Dispose();
 
         using (await pending)
         {
@@ -895,6 +896,103 @@ public class ContentionTests
         await Assert.That(Semaphores.AsyncSemaphore.OverflowPoolCount).IsLessThanOrEqualTo(Semaphores.AsyncSemaphore.OverflowPoolCapacity);
         await Assert.That(semaphore.CurrentCount).IsEqualTo(1);
     }
+
+#pragma warning disable SEM0004 // copies of a handle are disposed on purpose, from other threads, to race the release decision
+    [Test]
+    [MethodDataSource(nameof(PermitCounts))]
+    public async Task Copies_Disposed_Alongside_Later_Acquisitions_Never_Add_A_Permit(int maxCount)
+    {
+        using var semaphore = new Semaphores.AsyncSemaphore(maxCount);
+
+        var copies = new System.Collections.Concurrent.ConcurrentQueue<Semaphores.AsyncSemaphoreReleaser>();
+        var holders = 0;
+        var maxObserved = 0;
+        var workersDone = 0;
+
+        const int workers = 8;
+        const int disposers = 4;
+        const int iterationsPerWorker = 5_000;
+
+        var workerTasks = Enumerable.Range(0, workers).Select(workerIndex => Task.Run(async () =>
+        {
+            for (var i = 0; i < iterationsPerWorker; i++)
+            {
+                var handle = await semaphore.WaitAsync();
+
+                var current = Interlocked.Increment(ref holders);
+                InterlockedMax(ref maxObserved, current);
+
+                // Alternate sync and async holds so the fast path and the handoff both mint handles
+                if ((workerIndex + i) % 2 == 0)
+                {
+                    await Task.Yield();
+                }
+
+                Interlocked.Decrement(ref holders);
+
+                if (i % 2 == 0)
+                {
+                    // The copy goes stale first, and is disposed while later acquisitions are live
+                    handle.Dispose();
+                    copies.Enqueue(handle);
+                }
+                else
+                {
+                    // The copy races the owner for the one release this acquisition has
+                    copies.Enqueue(handle);
+                    handle.Dispose();
+                }
+            }
+        })).ToArray();
+
+        var disposerTasks = Enumerable.Range(0, disposers).Select(disposerIndex => Task.Run(() =>
+        {
+            var spinner = default(SpinWait);
+
+            while (true)
+            {
+                if (copies.TryDequeue(out var copy))
+                {
+                    if (disposerIndex % 2 == 0)
+                    {
+                        copy.Dispose();
+                    }
+                    else
+                    {
+                        ((IDisposable)copy).Dispose();
+                    }
+                }
+                else if (Volatile.Read(ref workersDone) == 1)
+                {
+                    return;
+                }
+                else
+                {
+                    spinner.SpinOnce();
+                }
+            }
+        })).ToArray();
+
+        try
+        {
+            await WhenAllWithTimeout(workerTasks);
+        }
+        finally
+        {
+            Volatile.Write(ref workersDone, 1);
+        }
+
+        await WhenAllWithTimeout(disposerTasks);
+
+        // A copy that released a second time would have let an extra holder in, or left a spare permit
+        await Assert.That(maxObserved).IsLessThanOrEqualTo(maxCount);
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(maxCount);
+
+        var all = await HoldAllPermits(semaphore, maxCount);
+        await Assert.That(semaphore.TryWait(out _)).IsFalse();
+        ReleaseAll(all);
+    }
+#pragma warning restore SEM0004
 
     public static IEnumerable<int> PermitCounts() => [1, 2, 4, 8];
 

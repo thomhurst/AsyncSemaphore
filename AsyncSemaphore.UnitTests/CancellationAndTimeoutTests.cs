@@ -68,7 +68,8 @@ public class CancellationAndTimeoutTests
         var holder = await semaphore.WaitAsync();
         var pending = semaphore.WaitAsync(TimeSpan.FromMilliseconds(200), cts.Token);
 
-        await Task.Run(holder.Dispose);
+        // Released inline: a release queued to a starved pool can land after the timer has fired
+        holder.Dispose();
 
         using (await pending)
         {

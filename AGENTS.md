@@ -4,6 +4,7 @@
 - Use the SDK pinned in `global.json`; project files define target frameworks and compiler settings.
 - Tests use TUnit. Roslyn analyzers SEM0001–SEM0004 enforce semaphore usage.
 - Releaser copies must share at-most-once release state. Never pool that state: stale copies can outlive later acquisitions.
+- The only state that is reused is a single-permit gate's own 64-bit epoch. A handle records the epoch it was acquired under and releases only by advancing exactly that value, which is sound because at most one acquisition is outstanding on such a gate. Do not extend it to gates with more permits, and do not shrink the epoch: it must never wrap onto a value a stale copy holds.
 
 ## Build and test
 
