@@ -162,6 +162,25 @@ public class UnpairedAsyncSemaphoreTests
     }
 
     [Test]
+    public async Task Timed_Waits_Complete_When_A_Release_Arrives_In_Time()
+    {
+        using var semaphore = new Semaphores.UnpairedAsyncSemaphore(0);
+
+        var asyncWaiter = semaphore.WaitAsync(TimeSpan.FromMinutes(5)).AsTask();
+        var blockingWaiter = BlockingThread.Start(() => semaphore.Wait(TimeSpan.FromMinutes(5)));
+
+        await blockingWaiter.WaitUntilQueued(() => semaphore.QueuedWaiterCount, 2);
+
+        semaphore.Release();
+        semaphore.Release();
+
+        await WhenAllWithTimeout([asyncWaiter, blockingWaiter.Completion]);
+
+        await Assert.That(semaphore.QueuedWaiterCount).IsEqualTo(0);
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Blocking_Cancellation_Throws_OperationCanceledException()
     {
         using var semaphore = new Semaphores.UnpairedAsyncSemaphore(0);
@@ -271,6 +290,50 @@ public class UnpairedAsyncSemaphoreTests
         await WhenAllWithTimeout(asyncWaiters.Concat(blockingWaiters).Concat(releasing).ToArray());
 
         await Assert.That(woken).IsEqualTo(2 * waitersPerFlavor * iterationsPerWorker);
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Release_Landing_Between_The_Fast_Path_And_The_Commit_Is_Consumed_Exactly_Once()
+    {
+        const int signals = 50_000;
+
+        using var semaphore = new Semaphores.UnpairedAsyncSemaphore(0);
+
+        var woken = 0;
+
+        var waiting = Task.Run(async () =>
+        {
+            for (var i = 0; i < signals; i++)
+            {
+                await semaphore.WaitAsync();
+                Interlocked.Increment(ref woken);
+            }
+        });
+
+        // One signal in flight at a time, published the moment the last one is consumed, so the count
+        // sits at zero as the waiter comes back around. The release then lands before its fast path
+        // (taken there), after its commit (handed over through the queue), or in between, where the
+        // commit decrement itself has to find the permit
+        var releasing = Task.Run(() =>
+        {
+            for (var i = 0; i < signals; i++)
+            {
+                semaphore.Release();
+
+                var spinner = default(SpinWait);
+
+                while (Volatile.Read(ref woken) <= i && !waiting.IsCompleted)
+                {
+                    spinner.SpinOnce();
+                }
+            }
+        });
+
+        await WhenAllWithTimeout([waiting, releasing]);
+
+        await Assert.That(woken).IsEqualTo(signals);
+        await Assert.That(semaphore.QueuedWaiterCount).IsEqualTo(0);
         await Assert.That(semaphore.CurrentCount).IsEqualTo(0);
     }
 

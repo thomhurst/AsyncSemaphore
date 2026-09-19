@@ -204,6 +204,78 @@ public class SynchronousWaitTests
     }
 
     [Test]
+    public async Task Interrupt_That_Loses_To_A_Release_Keeps_The_Permit_And_Stays_Pending()
+    {
+        const int maxAttempts = 500;
+        const int lostInterruptsWanted = 20;
+
+        using var semaphore = new Semaphores.AsyncSemaphore(1);
+
+        var lostInterrupts = 0;
+
+        for (var attempt = 0; attempt < maxAttempts && lostInterrupts < lostInterruptsWanted; attempt++)
+        {
+            var holder = await semaphore.WaitAsync();
+            var acquired = false;
+            var interruptStillPending = false;
+
+            var blocked = BlockingThread.Start(() =>
+            {
+                Semaphores.AsyncSemaphoreReleaser @lock;
+
+                try
+                {
+                    @lock = semaphore.Wait();
+                }
+                catch (ThreadInterruptedException)
+                {
+                    // The interrupt won the node; the release below has to settle it as a dead entry
+                    return;
+                }
+
+                acquired = true;
+
+                try
+                {
+                    // The release won the node, so the interrupt must surface at the next blocking call
+                    Thread.Sleep(TimeSpan.FromSeconds(5));
+                }
+                catch (ThreadInterruptedException)
+                {
+                    interruptStillPending = true;
+                }
+                finally
+                {
+                    @lock.Dispose();
+                }
+            });
+
+            await blocked.WaitUntilQueued(() => semaphore.QueuedWaiterCount, 1);
+
+            // Interrupt first, release right behind it from the same thread. The claim is a few
+            // instructions away while the interrupted thread still has to be scheduled, so the claim
+            // usually wins the node and the interrupt arrives to find it already taken
+            blocked.Interrupt();
+            holder.Dispose();
+
+            await WhenAllWithTimeout([blocked.Completion]);
+
+            if (acquired)
+            {
+                lostInterrupts++;
+
+                await Assert.That(interruptStillPending).IsTrue();
+            }
+
+            // Whoever won, there is exactly one permit and no debt
+            await Assert.That(semaphore.QueuedWaiterCount).IsEqualTo(0);
+            await Assert.That(semaphore.CurrentCount).IsEqualTo(1);
+        }
+
+        await Assert.That(lostInterrupts).IsGreaterThan(0);
+    }
+
+    [Test]
     public async Task Wait_Rejects_An_Out_Of_Range_Timeout()
     {
         using var semaphore = new Semaphores.AsyncSemaphore(1);
@@ -313,6 +385,46 @@ public class SynchronousWaitTests
             sharedCounter++; // unsynchronized on purpose; semaphore is the only guard
             Interlocked.Decrement(ref inCriticalSection);
         }
+    }
+
+    [Test]
+    public async Task Two_Blocking_Contenders_With_Varied_Holds_Lose_No_Release_At_The_Commit()
+    {
+        const int contenders = 2;
+        const int iterationsPerContender = 4_000;
+
+        using var semaphore = new Semaphores.AsyncSemaphore(1);
+
+        var inCriticalSection = 0;
+        var maxObserved = 0;
+        long sharedCounter = 0;
+
+        // Exactly two contenders keep the count at zero with no debt while one holds, and holds that
+        // straddle the other's spin budget land releases around its commit: just before its last spin
+        // (taken on the fast path), between that spin and the commit decrement (the decrement itself
+        // finds the permit), and just after (handed over through the queue)
+        var tasks = Enumerable.Range(0, contenders).Select(contender => BlockingThread.Start(() =>
+        {
+            var random = new Random(contender * 7919);
+
+            for (var i = 0; i < iterationsPerContender; i++)
+            {
+                using var @lock = semaphore.Wait();
+
+                var current = Interlocked.Increment(ref inCriticalSection);
+                InterlockedMax(ref maxObserved, current);
+                sharedCounter++; // unsynchronized on purpose; semaphore is the only guard
+                Thread.SpinWait(random.Next(0, 20_000));
+                Interlocked.Decrement(ref inCriticalSection);
+            }
+        }).Completion).ToArray();
+
+        await WhenAllWithTimeout(tasks);
+
+        await Assert.That(maxObserved).IsEqualTo(1);
+        await Assert.That(sharedCounter).IsEqualTo((long)contenders * iterationsPerContender);
+        await Assert.That(semaphore.QueuedWaiterCount).IsEqualTo(0);
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(1);
     }
 
     [Test]

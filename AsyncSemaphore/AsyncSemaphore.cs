@@ -787,14 +787,18 @@ public sealed class AsyncSemaphore : IAsyncSemaphore
             wakeEvent.Reset();
             _core.RunContinuationsAsynchronously = true;
 
+            var result = GetResult(token);
+
             if (interrupted)
             {
                 // The acquisition won the race, so the interrupt is left pending for the thread's
-                // next blocking call instead of being swallowed.
+                // next blocking call instead of being swallowed. Re-raised only once the result is in
+                // hand: recycling the node can contend on the pool's lock, and a pending interrupt
+                // surfacing there would take the permit down with it.
                 Thread.CurrentThread.Interrupt();
             }
 
-            return GetResult(token);
+            return result;
         }
 
         public void ArmCancellation(TimeSpan timeout, CancellationToken cancellationToken)

@@ -1,7 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+    <!--
+      One run per framework the library builds for: each picks up the matching library build, and the
+      node-recycling proof in the library leans on Timer.DisposeAsync behavior that has to hold on
+      every runtime it ships for. The netstandard2.0 build is covered by AsyncSemaphore.UnitTests.NetStandard.
+    -->
     <PropertyGroup>
-        <TargetFramework>net10.0</TargetFramework>
+        <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <OutputType>exe</OutputType>

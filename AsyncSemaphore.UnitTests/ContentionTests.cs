@@ -2,6 +2,7 @@
 // semaphore's internals, which is exactly what the usage analyzers guard against.
 #pragma warning disable SEM0001, SEM0002, SEM0003
 
+using System.Runtime.CompilerServices;
 using TUnit.Assertions.Enums;
 
 namespace AsyncSemaphore.UnitTests;
@@ -400,7 +401,7 @@ public class ContentionTests
     }
 
     [Test]
-    public async Task Timeout_Firing_After_Acquisition_Is_A_NoOp()
+    public async Task Holding_Past_The_Original_Timeout_Keeps_The_Permit()
     {
         using var semaphore = new Semaphores.AsyncSemaphore(1);
 
@@ -413,7 +414,8 @@ public class ContentionTests
 
         using (await pending)
         {
-            // Hold past the original timeout; the timer callback must lose the CAS
+            // Hold past the original timeout. The claim disarmed the timer, so it never fires here; the
+            // callback that is already running at the claim is CancellationAndTimeoutTests' case
             await Task.Delay(400);
 
             await Assert.That(semaphore.CurrentCount).IsEqualTo(0);
@@ -701,6 +703,106 @@ public class ContentionTests
             await Assert.That(acquired).IsEqualTo(workers);
             await Assert.That(semaphore.CurrentCount).IsEqualTo(maxCount);
         }
+    }
+
+    [Test]
+    public async Task Single_Release_Settles_Thousands_Of_Dead_Nodes_And_Reaches_The_Live_Waiter()
+    {
+        const int deadWaiters = 10_000;
+
+        using var semaphore = new Semaphores.AsyncSemaphore(1);
+
+        var holder = await semaphore.WaitAsync();
+
+        using var cts = new CancellationTokenSource();
+
+        var doomed = new Task[deadWaiters];
+
+        for (var i = 0; i < deadWaiters; i++)
+        {
+            doomed[i] = semaphore.WaitAsync(cts.Token).AsTask();
+        }
+
+        // Queued behind every node that is about to die
+        var live = semaphore.WaitAsync();
+
+        cts.Cancel();
+
+        try
+        {
+            await WhenAllWithTimeout(doomed);
+        }
+        catch (OperationCanceledException)
+        {
+            // expected
+        }
+
+        await Assert.That(doomed.All(wait => wait.IsCanceled)).IsTrue();
+
+        // A cancelled node never leaves the queue on its own: it stays as debt until a release settles it
+        await Assert.That(semaphore.QueuedWaiterCount).IsEqualTo(deadWaiters + 1);
+
+#pragma warning disable SEM0004 // kept out of a using so the test controls the release moment
+        holder.Dispose();
+#pragma warning restore SEM0004
+
+        using (await live)
+        {
+            await Assert.That(semaphore.QueuedWaiterCount).IsEqualTo(0);
+            await Assert.That(semaphore.CurrentCount).IsEqualTo(0);
+        }
+
+        await Assert.That(semaphore.CurrentCount).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Node_Cached_On_A_Thread_Does_Not_Keep_Its_Semaphore_Alive()
+    {
+        var collected = false;
+
+        // A dedicated thread, so its node cache starts empty and it is still alive, cache and all,
+        // when the collection runs
+        var thread = BlockingThread.Start(() =>
+        {
+            var semaphore = ContendOnceAndAbandon();
+
+            for (var i = 0; i < 5 && semaphore.IsAlive; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+
+            collected = !semaphore.IsAlive;
+        });
+
+        await WhenAllWithTimeout([thread.Completion]);
+
+        await Assert.That(collected).IsTrue();
+
+        // Not inlined, so none of its locals can outlive it in the caller's frame
+#pragma warning disable SEM0004 // released from a second thread, and acquired only to force a node rental
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        static WeakReference ContendOnceAndAbandon()
+        {
+            var semaphore = new Semaphores.AsyncSemaphore(1);
+            var holder = semaphore.Wait();
+
+            var releasingThread = new Thread(() =>
+            {
+                SpinWait.SpinUntil(() => semaphore.QueuedWaiterCount == 1);
+                holder.Dispose();
+            });
+
+            releasingThread.Start();
+
+            // Contended, so it rents a node, and GetResult then returns that node to this thread's cache
+            semaphore.Wait().Dispose();
+
+            releasingThread.Join();
+
+            return new WeakReference(semaphore);
+        }
+#pragma warning restore SEM0004
     }
 
     public static IEnumerable<int> PermitCounts() => [1, 2, 4, 8];

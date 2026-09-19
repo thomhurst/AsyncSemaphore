@@ -32,6 +32,7 @@ jobs:
         uses: actions/setup-dotnet@v6.0.0
         with:
           dotnet-version: |
+            8.0.x
             9.0.x
             10.0.x
       - name: NuGet login
@@ -49,3 +50,32 @@ jobs:
           NuGet__ApiKey: ${{ steps.login.outputs.NUGET_API_KEY }}
           PULL_REQUEST_BRANCH: ${{ github.event.pull_request.head.ref }}
           PUBLISH_PACKAGES: ${{ github.event.inputs.publish-packages }}
+
+  # The pipeline above covers Linux x64. The library is lock-free, so it also has to be raced where
+  # the memory model is weaker (ARM64) and where timers, thread wake-ups and the scheduler differ.
+  test-matrix:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04-arm, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+      - name: Unit tests (net8.0, net9.0, net10.0 builds)
+        run: dotnet test --project AsyncSemaphore.UnitTests -c Release --max-parallel-test-modules 1
+      - name: Unit tests (netstandard2.0 build)
+        run: dotnet test --project AsyncSemaphore.UnitTests.NetStandard -c Release

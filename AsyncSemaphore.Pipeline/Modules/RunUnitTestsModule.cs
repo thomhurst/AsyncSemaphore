@@ -20,7 +20,15 @@ public class RunUnitTestsModule : Module<List<CommandResult>>
         {
             results.Add(await context.DotNet().Test(new DotNetTestOptions
             {
-                Project = unitTestProjectFile
+                Project = unitTestProjectFile,
+
+                // The package ships the Release build, and the stress tests race code whose timing and
+                // codegen differ under Debug, so that is the build they have to run against.
+                Configuration = "Release",
+
+                // A multi-targeted test project is one module per framework. Run them one at a time so
+                // the stress tests contend with each other, not with a second copy of the suite.
+                MaxParallelTestModules = 1,
             }));
         }
 

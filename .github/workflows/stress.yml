@@ -1,0 +1,58 @@
+# The race tests are probabilistic: one pass samples a handful of interleavings, and a window a few
+# instructions wide can stay closed for thousands of them. A pull request can only afford one pass, so
+# this repeats the suite, in a fresh process each round (fresh JIT tiering, fresh thread placement), on
+# every OS and architecture the matrix in dotnet.yml covers.
+
+name: Stress
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: How many times to repeat the suite on each runner
+        type: number
+        default: 30
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    name: Stress (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+      - name: Build
+        shell: bash
+        run: |
+          dotnet build AsyncSemaphore.UnitTests -c Release
+          dotnet build AsyncSemaphore.UnitTests.NetStandard -c Release
+      - name: Repeat the suite
+        shell: bash
+        env:
+          ROUNDS: ${{ inputs.rounds || 30 }}
+        run: |
+          for round in $(seq 1 "$ROUNDS"); do
+            echo "::group::Round $round of $ROUNDS"
+            dotnet test --project AsyncSemaphore.UnitTests -c Release --no-build --max-parallel-test-modules 1
+            dotnet test --project AsyncSemaphore.UnitTests.NetStandard -c Release --no-build
+            echo "::endgroup::"
+          done

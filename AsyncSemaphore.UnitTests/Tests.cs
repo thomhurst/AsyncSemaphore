@@ -343,10 +343,11 @@ public class Tests
 
     private async Task<TimeSpan> Measure(Func<Task> func)
     {
-        var start = DateTime.Now;
+        // Monotonic: a wall-clock adjustment in the middle of a run must not fail a timing assertion
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         await func();
 
-        return DateTime.Now - start;
+        return stopwatch.Elapsed;
     } 
 }
