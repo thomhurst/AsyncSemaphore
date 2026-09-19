@@ -11,6 +11,8 @@ namespace Semaphores.Analyzers;
 public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
 {
     private const string CommonApiMethodName = "WaitAsync";
+    private const string SynchronousApiMethodName = "Wait";
+    private const string LockHandleTypeName = "AsyncSemaphoreReleaser";
     private const string CommonNamespace = "Semaphores";
 
     private static readonly string[] ValidTypeNames = ["AsyncSemaphore", "IAsyncSemaphore"];
@@ -39,8 +41,11 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
 
         var methodSymbol = invocationOperation.TargetMethod;
 
+        // The synchronous Wait returns the same lock handle, so it gets the same handle rules minus the await.
+        var isAsynchronous = methodSymbol.Name == CommonApiMethodName;
+
         if (methodSymbol.MethodKind != MethodKind.Ordinary ||
-            methodSymbol.Name != CommonApiMethodName)
+            (!isAsynchronous && !IsSynchronousWait(methodSymbol)))
         {
             return;
         }
@@ -62,7 +67,7 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
         var descendantNodes = parentStatement.DescendantNodes().ToList();
         var descendantTokens = parentStatement.DescendantTokens().ToList();
 
-        if (!descendantNodes.Any(x => x is AwaitExpressionSyntax))
+        if (isAsynchronous && !descendantNodes.Any(x => x is AwaitExpressionSyntax))
         {
             context.ReportDiagnostic(Diagnostic.Create(Rules.AwaitRule,
                 parentStatement.GetLocation()));
@@ -84,6 +89,14 @@ public class AsyncSemaphoreAnalyzer : DiagnosticAnalyzer
 
         context.ReportDiagnostic(Diagnostic.Create(Rules.UsingKeywordRule,
                 parentStatement.GetLocation()));
+    }
+
+    // "Wait" is a common name, so an implementer's unrelated Wait overload must not be mistaken for ours.
+    private static bool IsSynchronousWait(IMethodSymbol method)
+    {
+        return method.Name == SynchronousApiMethodName
+               && method.ReturnType.Name == LockHandleTypeName
+               && method.ReturnType.ContainingNamespace?.Name == CommonNamespace;
     }
 
     private static bool IsTargetType(ITypeSymbol? type)

@@ -4,6 +4,7 @@ An async semaphore featuring:
 - Automatic releasing without try/finally blocks by utilising the IDisposable `using` pattern
 - At-most-once release per acquisition, even when a handle is copied, boxed, or disposed concurrently
 - Pooled `IValueTaskSource` waiters to reduce allocation during contention
+- `TryWait` and a blocking `Wait` alongside `WaitAsync`, plus an opt-in `UnpairedAsyncSemaphore` for signal-style use
 - Analyzers to help you implement the desired pattern
 - An `IAsyncSemaphore` interface for if you need to mock
 
@@ -41,6 +42,44 @@ public async Task MyMethod()
     await DoSomethingAfterLockReleased();
 }
 ```
+
+### Try-acquire and blocking waits
+
+`TryWait` takes a permit only if one is available right now. It never blocks and never queues:
+
+```csharp
+if (_asyncSemaphore.TryWait(out var lockHandle))
+{
+    using (lockHandle)
+    {
+        DoSomethingInsideLock();
+    }
+}
+```
+
+`Wait` blocks the calling thread, for code paths where blocking is the intended behaviour. It takes the same timeout and cancellation arguments as `WaitAsync`, fails the same way (`TimeoutException`, `OperationCanceledException`), and queues in the same FIFO order as the async waiters:
+
+```csharp
+using var lockHandle = _asyncSemaphore.Wait(cancellationToken);
+```
+
+A blocked thread is woken directly by the thread that releases the permit, so it does not depend on the thread pool to make progress.
+
+### Releasing without a prior wait
+
+`AsyncSemaphore` only hands out a release through the handle of a successful wait, which is what lets it guarantee one release per acquisition. When that pairing genuinely does not fit (a wake-up signal, or a permit broker whose ownership is tracked elsewhere), opt in to `UnpairedAsyncSemaphore`:
+
+```csharp
+private readonly UnpairedAsyncSemaphore _signal = new UnpairedAsyncSemaphore(0);
+
+// A waiter, with nothing to dispose
+await _signal.WaitAsync(cancellationToken);
+
+// Any other code, whether or not it ever waited
+_signal.Release();
+```
+
+It has the same `WaitAsync`, `Wait` and `TryWait` operations on the same core, its count may start at zero, and its waits allocate no release handle. Nothing stops a permit from being leaked or released twice, and the analyzers do not cover it, so prefer `AsyncSemaphore` wherever the acquirer is also the releaser.
 
 ## Performance
 

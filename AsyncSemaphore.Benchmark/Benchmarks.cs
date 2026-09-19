@@ -18,6 +18,10 @@ public class Benchmarks
     private readonly Semaphores.AsyncSemaphore _asyncSemaphore = new(1);
     private readonly CancellationTokenSource _cts = new();
 
+    // Signal-style gates: the count starts at zero and permits are published by code that never waited.
+    private readonly SemaphoreSlim _signalSlim = new(0);
+    private readonly Semaphores.UnpairedAsyncSemaphore _unpairedSemaphore = new(0);
+
     [Benchmark(Baseline = true)]
     [BenchmarkCategory("Construct")]
     public SemaphoreSlim SemaphoreSlim_Construct() => new(1, 1);
@@ -219,5 +223,125 @@ public class Benchmarks
                 await Task.Yield();
             }
         }));
+    }
+
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("TryWait")]
+    public bool SemaphoreSlim_TryWait()
+    {
+        if (!_semaphoreSlim.Wait(0))
+        {
+            return false;
+        }
+
+        _semaphoreSlim.Release();
+
+        return true;
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("TryWait")]
+    public bool AsyncSemaphore_TryWait()
+    {
+        if (!_asyncSemaphore.TryWait(out var releaser))
+        {
+            return false;
+        }
+
+        releaser.Dispose();
+
+        return true;
+    }
+
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("SyncUncontended")]
+    public void SemaphoreSlim_Sync()
+    {
+        _semaphoreSlim.Wait();
+        _semaphoreSlim.Release();
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("SyncUncontended")]
+    public void AsyncSemaphore_Sync()
+    {
+        using var _ = _asyncSemaphore.Wait();
+    }
+
+    [Benchmark(Baseline = true, OperationsPerInvoke = ParallelWorkers * ParallelOperationsPerWorker)]
+    [BenchmarkCategory("SyncParallel")]
+    public Task SemaphoreSlim_SyncParallel()
+    {
+        return Task.WhenAll(Enumerable.Range(0, ParallelWorkers).Select(_ => Task.Run(() =>
+        {
+            for (var i = 0; i < ParallelOperationsPerWorker; i++)
+            {
+                _semaphoreSlim.Wait();
+
+                try
+                {
+                    Thread.Yield();
+                }
+                finally
+                {
+                    _semaphoreSlim.Release();
+                }
+            }
+        })));
+    }
+
+    [Benchmark(OperationsPerInvoke = ParallelWorkers * ParallelOperationsPerWorker)]
+    [BenchmarkCategory("SyncParallel")]
+    public Task AsyncSemaphore_SyncParallel()
+    {
+        return Task.WhenAll(Enumerable.Range(0, ParallelWorkers).Select(_ => Task.Run(() =>
+        {
+            for (var i = 0; i < ParallelOperationsPerWorker; i++)
+            {
+                using var @lock = _asyncSemaphore.Wait();
+                Thread.Yield();
+            }
+        })));
+    }
+
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("UnpairedUncontended")]
+    public async Task SemaphoreSlim_Unpaired()
+    {
+        _signalSlim.Release();
+        await _signalSlim.WaitAsync();
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("UnpairedUncontended")]
+    public async Task UnpairedAsyncSemaphore()
+    {
+        _unpairedSemaphore.Release();
+        await _unpairedSemaphore.WaitAsync();
+    }
+
+    [Benchmark(Baseline = true, OperationsPerInvoke = HandoffOperations)]
+    [BenchmarkCategory("UnpairedSignal")]
+    public async Task SemaphoreSlim_UnpairedSignal()
+    {
+        // A waiter queues on an empty gate and is woken by a release that never waited.
+        for (var i = 0; i < HandoffOperations; i++)
+        {
+            var pending = _signalSlim.WaitAsync();
+            _signalSlim.Release();
+            await pending;
+        }
+    }
+
+    [Benchmark(OperationsPerInvoke = HandoffOperations)]
+    [BenchmarkCategory("UnpairedSignal")]
+    public async Task UnpairedAsyncSemaphore_UnpairedSignal()
+    {
+        for (var i = 0; i < HandoffOperations; i++)
+        {
+            var pending = _unpairedSemaphore.WaitAsync();
+            _unpairedSemaphore.Release();
+            await pending;
+        }
     }
 }
