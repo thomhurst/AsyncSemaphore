@@ -159,6 +159,8 @@ A gate with a single permit (`new AsyncSemaphore(1)`) holds that decision itself
 
 A gate with more than one permit can have several acquisitions outstanding at once, so each successful acquisition allocates one small release-state object (24 bytes).
 
+Queued waiters are served in the order they arrived. On a single-permit gate, a caller that arrives while the permit is on its way to the next waiter may take it first. A waiter resumes on the thread pool, and until it does the gate is owned but idle. Behind a short critical section every caller that arrives in that gap would queue and pay the same hop in turn, so the waits convoy. A caller that is already running uses the gap instead. The waiter it overtook is served by its release, ahead of everything queued behind it, and a single wait is overtaken at most 16 times before the permit is handed to it directly. Waits with a timeout or a cancellable token, blocking waits, gates with more than one permit and `UnpairedAsyncSemaphore` are never overtaken.
+
 Construction is cheap: the waiter queue is created on the first contended wait, so a gate that never contends (one per cache entry, stream, or tenant) does not pay for it. Waiter nodes that overflow the per-thread and per-instance slots go to one bounded pool shared by every semaphore in the process, so a short-lived gate builds no pool of its own and its nodes outlive it.
 
 Contended waits reuse pooled `IValueTaskSource` nodes. Timed or cancellable waits may additionally allocate timers, registrations, and exceptions. The implementation is not allocation-free.

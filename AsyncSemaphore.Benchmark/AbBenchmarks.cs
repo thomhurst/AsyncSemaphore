@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using AsyncSemaphore.Benchmark.Baseline;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
@@ -5,7 +6,7 @@ using BenchmarkDotNet.Configs;
 namespace AsyncSemaphore.Benchmark;
 
 /// <summary>
-/// Same-run A/B of a frozen snapshot of the core (<see cref="BaselineAsyncSemaphore"/>, commit 575a0b2)
+/// Same-run A/B of a frozen snapshot of the core (<see cref="BaselineAsyncSemaphore"/>, commit 96f3d58)
 /// against the working-tree core, so a change can be measured without cross-run noise.
 /// Run with <c>--filter "*AbBenchmarks*"</c>.
 /// </summary>
@@ -370,6 +371,111 @@ public class AbBenchmarks
     public void New_MultiGateParallel()
     {
         Parallel.For(0, FanOutWorkers, worker => TakeTwice(_newGates[worker % Gates]).AsTask().GetAwaiter().GetResult());
+    }
+
+    // Issue #589 as the integration has it: work that needs no gate sits between the two acquisitions.
+    // A waiter resumed on the thread pool goes on to that work, so how long the gate stays idle between
+    // a release and the next critical section decides the result.
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("WorkBetweenParallel")]
+    public void Old_WorkBetweenParallel()
+    {
+        Parallel.For(0, FanOutWorkers, worker => TakeWorkTake(_old, worker).AsTask().GetAwaiter().GetResult());
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("WorkBetweenParallel")]
+    public void New_WorkBetweenParallel()
+    {
+        Parallel.For(0, FanOutWorkers, worker => TakeWorkTake(_new, worker).AsTask().GetAwaiter().GetResult());
+    }
+
+    // The same shape with nobody blocked: every caller is an async method on the thread pool.
+    [Benchmark(Baseline = true)]
+    [BenchmarkCategory("WorkBetweenAsync")]
+    public Task Old_WorkBetweenAsync()
+    {
+        return Task.WhenAll(Enumerable.Range(0, FanOutWorkers).Select(worker => Task.Run(() => TakeWorkTake(_old, worker).AsTask())));
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("WorkBetweenAsync")]
+    public Task New_WorkBetweenAsync()
+    {
+        return Task.WhenAll(Enumerable.Range(0, FanOutWorkers).Select(worker => Task.Run(() => TakeWorkTake(_new, worker).AsTask())));
+    }
+
+    // More than one permit: a grant is never published there, so this pair guards the shared slow path.
+    [Benchmark(Baseline = true, OperationsPerInvoke = ParallelWorkers * 2 * ParallelOperationsPerWorker)]
+    [BenchmarkCategory("CountedParallel")]
+    public Task Old_CountedParallel()
+    {
+        return Task.WhenAll(Enumerable.Range(0, ParallelWorkers * 2).Select(async _ =>
+        {
+            for (var i = 0; i < ParallelOperationsPerWorker; i++)
+            {
+                using var @lock = await _oldCounted.WaitAsync();
+                await Task.Yield();
+            }
+        }));
+    }
+
+    [Benchmark(OperationsPerInvoke = ParallelWorkers * 2 * ParallelOperationsPerWorker)]
+    [BenchmarkCategory("CountedParallel")]
+    public Task New_CountedParallel()
+    {
+        return Task.WhenAll(Enumerable.Range(0, ParallelWorkers * 2).Select(async _ =>
+        {
+            for (var i = 0; i < ParallelOperationsPerWorker; i++)
+            {
+                using var @lock = await _newCounted.WaitAsync();
+                await Task.Yield();
+            }
+        }));
+    }
+
+    private static async ValueTask<int> TakeWorkTake(BaselineAsyncSemaphore gate, int seed)
+    {
+        using (await gate.WaitAsync().ConfigureAwait(false))
+        {
+        }
+
+        var result = WorkOutsideTheGate(seed);
+
+        using (await gate.WaitAsync().ConfigureAwait(false))
+        {
+        }
+
+        return result;
+    }
+
+    private static async ValueTask<int> TakeWorkTake(Semaphores.AsyncSemaphore gate, int seed)
+    {
+        using (await gate.WaitAsync().ConfigureAwait(false))
+        {
+        }
+
+        var result = WorkOutsideTheGate(seed);
+
+        using (await gate.WaitAsync().ConfigureAwait(false))
+        {
+        }
+
+        return result;
+    }
+
+    /// <summary>Stands in for building the value the integration publishes: about half a microsecond that needs no gate.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int WorkOutsideTheGate(int seed)
+    {
+        var value = seed;
+
+        for (var i = 0; i < 1_024; i++)
+        {
+            value = (value * 31) + i;
+        }
+
+        return value;
     }
 
     private static async ValueTask TakeTwice(BaselineAsyncSemaphore gate)

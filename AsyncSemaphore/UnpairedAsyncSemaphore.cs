@@ -37,6 +37,9 @@ public sealed class UnpairedAsyncSemaphore : IDisposable
     /// <inheritdoc cref="AsyncSemaphore.QueuedWaiterCount"/>
     internal int QueuedWaiterCount => _semaphore.QueuedWaiterCount;
 
+    /// <inheritdoc cref="AsyncSemaphore.HasPublishedGrant"/>
+    internal bool HasPublishedGrant => _semaphore.HasPublishedGrant;
+
     /// <summary>Waits for a permit. The caller owns returning it, if it is ever to be returned, through <see cref="Release"/>.</summary>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     /// <exception cref="ObjectDisposedException">The semaphore has been disposed.</exception>
