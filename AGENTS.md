@@ -32,3 +32,7 @@ Run the same selection of relevant cases before and after:
 ```bash
 dotnet run --project AsyncSemaphore.Benchmark -c Release -- --filter '<benchmark-pattern>'
 ```
+
+## Pull request reviews
+
+- Resolve each PR review thread, whether a human or a bot opened it, as soon as you have dispositioned it: the fix is pushed to the PR head and your reply names the commit, or your reply pushes back on the finding with evidence. Leave a thread open only while it has no disposition. If the reviewer replies after your disposition, unresolve the thread and handle the reply.
