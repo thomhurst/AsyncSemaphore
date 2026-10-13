@@ -413,3 +413,6 @@ FodyWeavers.xsd
 /*-comment.md
 /issue.md
 /*-issue.md
+
+# Local SDK installs (dotnet-install.ps1 -InstallDir .dotnet)
+/.dotnet/

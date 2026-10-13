@@ -53,7 +53,10 @@ foreach ($directory in @(
 $script:DisposableWorktreeScopedDirectories = @(
     'docs/.cache',
     'docs/.docusaurus',
-    'docs/build'
+    'docs/build',
+    # Root-level SDK installs and agent scratch space.
+    '.dotnet',
+    '.tmp'
 )
 
 function Test-DisposableWorktreePath {
@@ -333,18 +336,231 @@ function Remove-MergedWorktree {
     }
     if (-not (Test-WorktreeSafeToRemove @safetyArgs)) { return }
 
-    # Primary path: let git remove it (force clears untracked artifacts; tracked is clean).
-    git -C $Repo worktree remove --force $Worktree 2>$null
+    $pending = Register-PendingWorktreeRemoval -Repo $Repo -Worktree $Worktree
+    if (Remove-VettedWorktree -Repo $Repo -Worktree $Worktree -Label $Label) {
+        if ($pending) { Remove-Item -LiteralPath $pending -Force -ErrorAction SilentlyContinue }
+        Write-Host "Removed worktree $Label : $Worktree"
+    } elseif ($pending) {
+        Write-Host "WARNING: could not fully remove $Worktree; Remove-MergedWorktrees.ps1 retries the pending removal"
+    } else {
+        Write-Host "WARNING: could not fully remove $Worktree"
+    }
+}
 
-    # Fallback for long-path failures (only if core.longpaths is somehow off).
+# Deletes a worktree whose content callers already vetted as disposable, then prunes
+# its registration. Returns whether the directory is gone.
+function Remove-VettedWorktree {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$Worktree,
+        [string]$Label = ''
+    )
+
+    # Primary path: let git remove it. Double force also deletes the remnant of an
+    # earlier, partially failed removal.
+    git -C $Repo -c core.longpaths=true worktree remove --force --force $Worktree 2>$null | Out-Null
+
+    # Fallback for long-path failures and remnants that Git no longer recognizes.
     if (Test-Path -LiteralPath $Worktree) {
         Remove-WorktreeDirectoryFallback -Worktree $Worktree -Label $Label | Out-Null
     }
 
-    git -C $Repo worktree prune
-    if (Test-Path -LiteralPath $Worktree) {
-        Write-Host "WARNING: could not fully remove $Worktree"
-    } else {
-        Write-Host "Removed worktree $Label : $Worktree"
+    git -C $Repo worktree prune 2>$null | Out-Null
+    return -not (Test-Path -LiteralPath $Worktree)
+}
+
+# PENDING REMOVALS
+# On Windows a directory cannot be deleted while any process has its current directory
+# inside it, and build or test processes can hold files open briefly. Git then deletes
+# part of the tree, including the .git file, and fails. The remnant no longer looks like
+# a worktree, so neither release nor the merged-worktree sweep would recognize it again.
+# Before deleting a vetted checkout, cleanup records it under the common Git directory.
+# The record is removed after success, and Complete-PendingWorktreeRemovals retries the
+# rest once the blocking process has exited.
+
+function Get-PendingWorktreeRemovalDirectory {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Repo)
+
+    $common = git -C $Repo rev-parse --path-format=absolute --git-common-dir 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $common) { return $null }
+    return Join-Path $common.Trim() 'agent-pending-removals'
+}
+
+function Get-WorktreeAgentLockNames {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Worktree, [string]$Branch = '')
+
+    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $marker = git -C $Worktree config --worktree --get agent.lockName 2>$null
+    if ($LASTEXITCODE -eq 0 -and $marker) { [void]$names.Add($marker.Trim()) }
+    $leaf = Split-Path -Path $Worktree -Leaf
+    if ($leaf -match '^(?<Lock>(?:pr|issue)-\d+)(?:-|$)') { [void]$names.Add($Matches.Lock.ToLowerInvariant()) }
+    foreach ($match in [regex]::Matches($Branch, '(?:^|[-/])((?:pr|issue)-\d+)(?=$|[-/])', 'IgnoreCase')) {
+        [void]$names.Add($match.Groups[1].Value.ToLowerInvariant())
     }
+    return $names | Sort-Object -CaseSensitive
+}
+
+function Register-PendingWorktreeRemoval {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$Worktree,
+        [string[]]$LockNames = @()
+    )
+
+    $directory = Get-PendingWorktreeRemovalDirectory -Repo $Repo
+    if (-not $directory) { return $null }
+    $path = Get-NormalizedFilesystemPath -Path $Worktree
+    $gitDirectory = git -C $path rev-parse --absolute-git-dir 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $gitDirectory) { return $null }
+    $branch = git -C $path symbolic-ref -q --short HEAD 2>$null
+    $names = @(Get-WorktreeAgentLockNames -Worktree $path -Branch ([string]$branch)) + $LockNames
+
+    $key = if ($IsWindows) { $path.ToLowerInvariant() } else { $path }
+    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($key)))
+    $record = Join-Path $directory ($hash.Substring(0, 16).ToLowerInvariant() + '.json')
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    [ordered]@{
+        path         = $path
+        gitDirectory = Get-NormalizedFilesystemPath -Path $gitDirectory.Trim()
+        lockNames    = @($names | Where-Object { $_ } | Sort-Object -CaseSensitive -Unique)
+        recordedAt   = [DateTimeOffset]::UtcNow.ToString('o')
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath $record -NoNewline
+    return $record
+}
+
+function Test-HasWorkNewerThan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][DateTimeOffset]$Cutoff
+    )
+
+    foreach ($file in (Get-ChildItem -LiteralPath $Path -File -Recurse -Force -ErrorAction SilentlyContinue)) {
+        $relative = [IO.Path]::GetRelativePath($Path, $file.FullName)
+        if ($relative -eq '.git' -or (Test-DisposableWorktreePath -Path $relative)) { continue }
+        if ($file.LastWriteTimeUtc -gt $Cutoff.UtcDateTime) { return $true }
+    }
+    return $false
+}
+
+function Invoke-PendingRemovalLock {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [Parameter(Mandatory)][ValidateSet('status', 'acquire', 'release')][string]$Verb,
+        [Parameter(Mandatory)][string]$LockName,
+        [Parameter(Mandatory)][string]$OwnerId
+    )
+
+    # Acquire prints a token. Never forward it.
+    $output = @(& pwsh -NoProfile -File $ScriptPath $Verb -LockName $LockName -OwnerId $OwnerId 2>&1)
+    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Status = ($output -join "`n").Trim() }
+}
+
+function Remove-PendingWorktreeRemovalRecord {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Record, [switch]$WhatIf)
+
+    if (-not $WhatIf) { Remove-Item -LiteralPath $Record -Force -ErrorAction SilentlyContinue }
+}
+
+function Complete-PendingWorktreeRemovals {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [switch]$WhatIf
+    )
+
+    $directory = Get-PendingWorktreeRemovalDirectory -Repo $Repo
+    if (-not $directory -or -not (Test-Path -LiteralPath $directory)) { return 0 }
+    $agentLocks = Join-Path $Repo 'scripts/AgentLocks.ps1'
+    $completed = 0
+    foreach ($recordFile in (Get-ChildItem -LiteralPath $directory -File -Filter '*.json')) {
+        $recordPath = $recordFile.FullName
+        try {
+            $record = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
+            $path = [string]$record.path
+            $recordedAt = [DateTimeOffset]::Parse([string]$record.recordedAt, [Globalization.CultureInfo]::InvariantCulture)
+        }
+        catch {
+            Write-Host "sweep: WARNING unreadable pending removal record: $recordPath"
+            continue
+        }
+
+        if (-not $path -or -not (Test-Path -LiteralPath $path)) {
+            Remove-PendingWorktreeRemovalRecord -Record $recordPath -WhatIf:$WhatIf
+            continue
+        }
+
+        # A new checkout at the same path has its own Git metadata, created after the record.
+        $marker = Join-Path $path '.git'
+        if (Test-Path -LiteralPath $marker -PathType Leaf) {
+            $gitDirectory = ((Get-Content -LiteralPath $marker -TotalCount 1) -replace '^gitdir:\s*', '').Trim()
+            if ($gitDirectory -and -not [IO.Path]::IsPathRooted($gitDirectory)) { $gitDirectory = Join-Path $path $gitDirectory }
+            if ($gitDirectory -and (Test-Path -LiteralPath $gitDirectory) -and (
+                    -not (Test-SameFilesystemPath -Left $gitDirectory -Right ([string]$record.gitDirectory)) -or
+                    (Get-Item -LiteralPath $gitDirectory -Force).CreationTimeUtc -gt $recordedAt.UtcDateTime)) {
+                Write-Host "sweep: dropping pending removal superseded by a new checkout: $path"
+                Remove-PendingWorktreeRemovalRecord -Record $recordPath -WhatIf:$WhatIf
+                continue
+            }
+        }
+        elseif (Test-Path -LiteralPath $marker) {
+            Write-Host "sweep: dropping pending removal for a standalone repository: $path"
+            Remove-PendingWorktreeRemovalRecord -Record $recordPath -WhatIf:$WhatIf
+            continue
+        }
+
+        # The checkout was vetted before deletion began. Anything written since is new work.
+        if (Test-HasWorkNewerThan -Path $path -Cutoff $recordedAt) {
+            Write-Host "sweep: WARNING preserving pending removal with files changed after removal began; inspect manually: $path"
+            Remove-PendingWorktreeRemovalRecord -Record $recordPath -WhatIf:$WhatIf
+            continue
+        }
+
+        # Reserve the item locks through deletion so a live owner keeps its checkout.
+        $names = @($record.lockNames | Where-Object { $_ })
+        if ($names.Count -gt 0 -and -not (Test-Path -LiteralPath $agentLocks -PathType Leaf)) {
+            Write-Host "sweep: preserving pending removal; canonical lock script is unavailable: $path"
+            continue
+        }
+        $owner = "worktree-cleanup-$([Guid]::NewGuid().ToString('N'))"
+        $acquired = [Collections.Generic.List[string]]::new()
+        try {
+            $available = $true
+            foreach ($name in $names) {
+                $verb = if ($WhatIf) { 'status' } else { 'acquire' }
+                $result = Invoke-PendingRemovalLock -ScriptPath $agentLocks -Verb $verb -LockName $name -OwnerId $owner
+                if ($result.ExitCode -ne 0 -or ($WhatIf -and $result.Status -ne 'FREE')) {
+                    Write-Host "sweep: preserving pending removal; lock $name is held or unavailable: $path"
+                    $available = $false
+                    break
+                }
+                if (-not $WhatIf) { $acquired.Add($name) }
+            }
+            if (-not $available) { continue }
+            if ($WhatIf) {
+                Write-Host "sweep: WOULD finish pending removal of $path"
+                continue
+            }
+            if (Remove-VettedWorktree -Repo $Repo -Worktree $path -Label '(pending removal)') {
+                Remove-PendingWorktreeRemovalRecord -Record $recordPath
+                $completed++
+                Write-Host "sweep: finished pending removal of $path"
+            } else {
+                Write-Host "sweep: WARNING pending removal is still blocked, retrying next sweep: $path"
+            }
+        }
+        finally {
+            for ($index = $acquired.Count - 1; $index -ge 0; $index--) {
+                $released = Invoke-PendingRemovalLock -ScriptPath $agentLocks -Verb release -LockName $acquired[$index] -OwnerId $owner
+                if ($released.ExitCode -ne 0) { Write-Host "WARNING: could not release cleanup reservation $($acquired[$index])." }
+            }
+        }
+    }
+    return $completed
 }

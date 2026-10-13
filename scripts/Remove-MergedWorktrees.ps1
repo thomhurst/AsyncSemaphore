@@ -68,6 +68,18 @@ function Test-WorktreePathRegistered {
     return $false
 }
 
+function Test-StaleSetupLock {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path, [string]$Reason)
+
+    if ($Reason -notmatch '^(?i:(PR|Issue) checkout setup)$') { return $false }
+    $gitDirectory = git -C $Path rev-parse --absolute-git-dir 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $gitDirectory) { return $false }
+    $lockFile = Get-Item -LiteralPath (Join-Path $gitDirectory.Trim() 'locked') -Force -ErrorAction SilentlyContinue
+    # Matches the AgentLocks.ps1 TTL: no live owner can still be setting up.
+    return $lockFile -and $lockFile.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddHours(-2)
+}
+
 function Remove-EmptyDirectoryShell {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -191,16 +203,21 @@ try {
     $branch = $null
     $detached = $false
     $locked = $false
+    $lockReason = $null
     foreach ($line in (git -C $mainRepo worktree list --porcelain)) {
         if ($line -like 'worktree *') {
             $currentPath = $line.Substring(9)
             $branch = $null
             $detached = $false
             $locked = $false
+            $lockReason = $null
         }
         elseif ($line -like 'branch *') { $branch = $line.Substring(7) -replace '^refs/heads/', '' }
         elseif ($line -eq 'detached') { $detached = $true }
-        elseif ($line -eq 'locked' -or $line -like 'locked *') { $locked = $true }
+        elseif ($line -eq 'locked' -or $line -like 'locked *') {
+            $locked = $true
+            $lockReason = $line -replace '^locked ?', ''
+        }
         elseif ($line -eq '') {
             if ($currentPath) {
                 $worktrees += [pscustomobject]@{
@@ -208,6 +225,7 @@ try {
                     Branch = $branch
                     Detached = $detached
                     Locked = $locked
+                    LockReason = $lockReason
                 }
             }
             $currentPath = $null
@@ -219,6 +237,7 @@ try {
             Branch = $branch
             Detached = $detached
             Locked = $locked
+            LockReason = $lockReason
         }
     }
 
@@ -229,6 +248,20 @@ try {
         $worktreeNormalized = ($worktree.Path -replace '\\', '/').TrimEnd('/')
         if ((Test-SameFilesystemPath -Left $worktree.Path -Right $mainRepo) -or
             $worktreeNormalized.StartsWith("$mainNormalized/", [StringComparison]::OrdinalIgnoreCase)) { continue }
+        if ($worktree.Locked -and (Test-StaleSetupLock -Path $worktree.Path -Reason $worktree.LockReason)) {
+            # The setup lock only guards checkout until Redis ownership is registered. One
+            # older than the Redis TTL outlived its owner; merge-evidence guards still apply.
+            if ($WhatIf) {
+                Write-Host "sweep: WOULD unlock stale setup lock: $($worktree.Path)"
+            }
+            else {
+                git -C $mainRepo worktree unlock $worktree.Path 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    $worktree.Locked = $false
+                    Write-Host "sweep: unlocked stale setup lock: $($worktree.Path)"
+                }
+            }
+        }
         if ($worktree.Locked) {
             Write-Host "sweep: skipping locked worktree (session may own it): $($worktree.Path)"
             continue
@@ -402,6 +435,9 @@ try {
         }
     }
 
+    # Removals that a busy directory interrupted, whatever started them.
+    $pendingRemoved = Complete-PendingWorktreeRemovals -Repo $mainRepo -WhatIf:$WhatIf
+
     # Re-read registrations after removals. A failed remove followed by prune may have
     # turned a formerly registered path into an orphan during this same sweep.
     $filesystemPathComparer = if ($IsWindows) {
@@ -521,7 +557,7 @@ try {
     }
 
     git -C $mainRepo worktree prune
-    Write-Host "sweep: removed $removed registered worktree(s), $orphansRemoved orphaned dir(s)."
+    Write-Host "sweep: removed $removed registered worktree(s), $orphansRemoved orphaned dir(s), $pendingRemoved pending removal(s)."
 }
 catch {
     Warn "unexpected sweep error (ignored, loop continues): $_"
