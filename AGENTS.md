@@ -23,7 +23,7 @@ dotnet test --project AsyncSemaphore.Analyzers/AsyncSemaphore.Analyzers.Tests
 ## Performance validation
 
 - Benchmark or profile before every change and after the final edit. Prefer `AsyncSemaphore.Benchmark`; add coverage when needed to exercise affected behavior.
-- Use the same representative workloads, Release configuration, machine, SDK/runtime, and measurement settings for both runs. Record the baseline revision, existing local changes, environment, and exact commands; preserve baseline and final artifacts separately.
+- Use the same representative workloads, Release configuration, machine, SDK/runtime, and measurement settings for both runs. Record the baseline revision, existing local changes, environment, and exact commands; preserve baseline and final artifacts separately. Build a baseline in its own worktree and keep artifacts under the evidence root; locations are in [issue-pr-loop § Isolation and ownership](.agents/skills/issue-pr-loop/SKILL.md#isolation-and-ownership).
 - Compare time/throughput, allocations, GC, and relevant contention/latency. Repeat noisy measurements and fix regressions before completion; do not weaken workloads or hide unfavorable cases. Tests do not replace measurements.
 - Include before/after results, percentage changes, commands, and artifact paths in the handoff and PR description. If measurements are blocked or inconclusive, explicitly leave performance validation incomplete and do not claim unchanged performance or full validation.
 

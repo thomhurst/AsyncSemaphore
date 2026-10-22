@@ -26,6 +26,10 @@
 #   the dedicated sibling worktree root, after a five-minute creation grace period,
 #   and only with non-recursive directory deletes that cannot erase concurrent writes.
 #
+# AGENT EVIDENCE:
+#   Entries under <main checkout>-evidence/ (one folder per work item) are removed once
+#   their newest write is older than -EvidenceRetentionDays (default 7).
+#
 # Guards (never delete work):
 #   - skip the main checkout and harness-managed worktrees inside it
 #   - skip locked worktrees
@@ -33,7 +37,7 @@
 #   - PRESERVE uncommitted tracked changes or commits beyond the recorded PR head
 #   - preserve worktrees with no merge evidence unless -StaleDays explicitly opts in
 #
-# Usage:  pwsh scripts/Remove-MergedWorktrees.ps1 [-Repo owner/name] [-WhatIf] [-StaleDays n]
+# Usage:  pwsh scripts/Remove-MergedWorktrees.ps1 [-Repo owner/name] [-WhatIf] [-StaleDays n] [-EvidenceRetentionDays n]
 # Exit:   0 always (a sweep failure must not break the loop; problems are logged)
 
 [CmdletBinding()]
@@ -41,7 +45,9 @@ param(
     [string]$Repo,
     [switch]$WhatIf,
     [ValidateRange(0, 2147483647)]
-    [int]$StaleDays = 0
+    [int]$StaleDays = 0,
+    [ValidateRange(1, 3650)]
+    [int]$EvidenceRetentionDays = 7
 )
 
 $ErrorActionPreference = 'Stop'
@@ -556,8 +562,10 @@ try {
         }
     }
 
+    $evidenceRemoved = Remove-StaleAgentEvidence -Root (Get-AgentEvidenceRoot -MainCheckout $mainRepo) -RetentionDays $EvidenceRetentionDays -WhatIf:$WhatIf
+
     git -C $mainRepo worktree prune
-    Write-Host "sweep: removed $removed registered worktree(s), $orphansRemoved orphaned dir(s), $pendingRemoved pending removal(s)."
+    Write-Host "sweep: removed $removed registered worktree(s), $orphansRemoved orphaned dir(s), $pendingRemoved pending removal(s), $evidenceRemoved stale evidence entr(ies)."
 }
 catch {
     Warn "unexpected sweep error (ignored, loop continues): $_"

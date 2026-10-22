@@ -1,6 +1,8 @@
 # Local worktree lifecycle
 
-`AgentLocks.ps1 release` removes its recorded checkout before releasing ownership. Register the path once after checkout with `renew -LockName <name> -Worktree <absolute-path>`. Use the shared checkout's current script, and release in `finally` after stopping owned processes and saving evidence outside the worktree.
+`AgentLocks.ps1 release` removes its recorded checkout before releasing ownership. Register the path once after checkout with `renew -LockName <name> -Worktree <absolute-path>`. Use the shared checkout's current script, and release in `finally` after stopping owned processes and saving evidence in `<main checkout>-evidence/<lock-name>/` (locations: [issue-pr-loop § Isolation and ownership](../.agents/skills/issue-pr-loop/SKILL.md#isolation-and-ownership)). `Remove-MergedWorktrees.ps1` deletes evidence entries whose newest file is older than `-EvidenceRetentionDays` (default 7).
+
+The lock marker that `-Worktree` writes (`agent.lockName`) also records the worktree path it belongs to (`agent.lockWorktree`). `git worktree add` copies the source checkout's per-worktree config, so a marker is trusted only in the worktree whose path it names, and the main checkout never receives one.
 
 Local branches remain available for `git worktree add <path> <branch>`. Detached commits are retained as `retained-worktrees/<SHA>`. Uncommitted source, unknown ignored files, Git-locked worktrees, the main checkout and foreign repositories are preserved. Known generated output is disposable under `WorktreeCleanup.ps1`. Release prints why a checkout was retained.
 
@@ -12,4 +14,6 @@ Run regression tests locally with PowerShell 7, Git and Docker:
 
 ```powershell
 pwsh scripts/Test-ReleasedWorktreeCleanup.ps1
+pwsh scripts/Test-AgentLocks.ps1
+pwsh scripts/Test-AgentEvidenceCleanup.ps1 # needs no Docker
 ```
