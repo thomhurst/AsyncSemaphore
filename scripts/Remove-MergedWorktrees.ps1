@@ -281,6 +281,9 @@ try {
         }
         $sha = $sha.Trim()
         if ($openOids.ContainsKey($sha)) { continue }
+        # A named branch with no commits beyond main is proven merged only by tier 1.
+        $freshBranch = $worktree.Branch -and -not $worktree.Detached -and
+            (Test-HeadHasNoWorkBeyondMain -Repo $mainRepo -Head $sha -MainTip $mainTip)
 
         $evidence = $null
         if ($worktree.Branch -and $mergedByName.ContainsKey($worktree.Branch)) {
@@ -294,7 +297,7 @@ try {
             }
         }
 
-        if (-not $evidence -and $mergedByOid.ContainsKey($sha)) {
+        if (-not $evidence -and -not $freshBranch -and $mergedByOid.ContainsKey($sha)) {
             $pr = $mergedByOid[$sha]
             $evidence = [pscustomobject]@{
                 Reason = 'merged PR head tip SHA'
