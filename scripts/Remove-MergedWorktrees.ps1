@@ -117,7 +117,7 @@ function Test-PullRequestMatchesWorktree {
     if ($Worktree.Branch -and [string]::Equals(
         $Worktree.Branch,
         $PullRequest.head.ref,
-        [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        [StringComparison]::Ordinal)) { return $true }
     if (-not $Worktree.Branch) { return $false }
 
     # A renamed local PR branch retains its original upstream configuration even after
@@ -148,10 +148,13 @@ function Test-WorktreeContainsCommit {
 # loop iteration. $ErrorActionPreference is 'Stop', so any unguarded throw is caught,
 # logged, and swallowed.
 try {
-    $mergedByName = @{}
+    # Git branch names are case-sensitive, and @{} is not: `Issue-5` cut from main would
+    # match a merged `issue-5` whose head contains main. Evidence tables compare ordinally.
+    # The open-PR name table is a deletion guard, so it deliberately stays case-insensitive.
+    $mergedByName = [System.Collections.Hashtable]::new([System.StringComparer]::Ordinal)
     $mergedByOid = @{}
-    $closedByIdentity = @{}
-    $openNames = @{}
+    $closedByIdentity = [System.Collections.Hashtable]::new([System.StringComparer]::Ordinal)
+    $openNames = [System.Collections.Hashtable]::new([System.StringComparer]::OrdinalIgnoreCase)
     $openOids = @{}
 
     $rawMerged = gh pr list @repoArgs --state merged --limit 1000 --json number,headRefName,headRefOid,isCrossRepository 2>$null

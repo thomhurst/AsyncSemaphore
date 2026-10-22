@@ -468,6 +468,9 @@ def assert_merged_worktree_sweep_behavior(errors: list[str]) -> None:
             )
             push(open_association_guard, "open-association-original", set_upstream=True)
 
+            # A fresh branch whose name differs only in case from a merged PR branch.
+            case_variant_branch = add_worktree("Case-Merged-Name", "case-variant-branch")
+
             divergent = add_worktree("divergent-branch", "divergent-branch")
             divergent_pr_head = commit(divergent, "divergent recorded PR head")
             push(divergent, "divergent-branch")
@@ -593,6 +596,14 @@ def assert_merged_worktree_sweep_behavior(errors: list[str]) -> None:
             {
                 "headRefName": "harness-managed-branch",
                 "headRefOid": harness_managed_head,
+                "isCrossRepository": False,
+            },
+            {
+                # Its head contains main, so a case-insensitive name match would
+                # satisfy containment for the fresh Case-Merged-Name branch.
+                "number": 103,
+                "headRefName": "case-merged-name",
+                "headRefOid": named_head,
                 "isCrossRepository": False,
             },
         ]
@@ -738,6 +749,7 @@ def assert_merged_worktree_sweep_behavior(errors: list[str]) -> None:
             markerless_empty_orphan,
             markerless_recent_candidate,
             divergent,
+            case_variant_branch,
             open_guard,
             open_association_guard,
             stale,
@@ -798,6 +810,7 @@ def assert_merged_worktree_sweep_behavior(errors: list[str]) -> None:
             divergent: "branch with commits beyond recorded PR head",
             closed_divergent: "closed PR branch with commits beyond recorded PR head",
             unmatched: "worktree with no merge evidence",
+            case_variant_branch: "branch whose name differs only in case from a merged PR branch",
             harness_managed: "harness-managed worktree nested under the main checkout",
             artifact: "non-worktree artifact directory",
             foreign: "worktree marker owned by another repository",
