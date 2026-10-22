@@ -87,7 +87,7 @@ if (-not $Worktree) {
 if (-not $Worktree) {
     Write-Host "No isolated worktree found for branch '$headRef'."
 } else {
-    Remove-MergedWorktree -Repo $mainRepo -Worktree $Worktree -ExpectedHead $headRefOid -Remote $gitRemote -Label "#${Pr}"
+    Remove-MergedWorktree -Repo $mainRepo -Worktree $Worktree -ExpectedHead $headRefOid -Remote $gitRemote -Label "#${Pr}" -LockNames @("pr-$Pr")
     if (Test-Path -LiteralPath $Worktree) {
         Write-Host "Preserving branches for '$headRef' because its worktree remains."
         exit 0

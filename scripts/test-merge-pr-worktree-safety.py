@@ -565,6 +565,7 @@ def assert_merged_worktree_sweep_behavior(errors: list[str]) -> None:
 
         merged_prs = [
             {
+                "number": 101,
                 "headRefName": "merged-name",
                 "headRefOid": named_head,
                 "isCrossRepository": False,
@@ -628,6 +629,7 @@ def assert_merged_worktree_sweep_behavior(errors: list[str]) -> None:
             ],
             associated_head: [
                 {
+                    "number": 102,
                     "state": "closed",
                     "merged_at": "2026-07-15T10:30:18Z",
                     "head": {

@@ -132,6 +132,18 @@ function Test-PullRequestMatchesWorktree {
         [string]::Equals($upstreamMerge.Trim(), "refs/heads/$($PullRequest.head.ref)", [StringComparison]::Ordinal)
 }
 
+function Test-WorktreeContainsCommit {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$Head,
+        [Parameter(Mandatory)][string]$Commit
+    )
+
+    git -C $Repo merge-base --is-ancestor $Commit $Head 2>$null
+    return $LASTEXITCODE -eq 0
+}
+
 # "Exit 0 always" is load-bearing: a sweep failure must never kill an otherwise-healthy
 # loop iteration. $ErrorActionPreference is 'Stop', so any unguarded throw is caught,
 # logged, and swallowed.
@@ -142,7 +154,7 @@ try {
     $openNames = @{}
     $openOids = @{}
 
-    $rawMerged = gh pr list @repoArgs --state merged --limit 1000 --json headRefName,headRefOid,isCrossRepository 2>$null
+    $rawMerged = gh pr list @repoArgs --state merged --limit 1000 --json number,headRefName,headRefOid,isCrossRepository 2>$null
     if ($LASTEXITCODE -ne 0) {
         Warn "could not list merged PRs (exit $LASTEXITCODE) -- skipping sweep this round"
         exit 0
@@ -285,9 +297,18 @@ try {
         $freshBranch = $worktree.Branch -and -not $worktree.Detached -and
             (Test-HeadHasNoWorkBeyondMain -Repo $mainRepo -Head $sha -MainTip $mainTip)
 
+        # A named branch proven to be a merged PR's own head branch also takes that PR's
+        # lock identity, so a busy-directory retry of a checkout with a non-canonical path
+        # and no marker still reserves it. Detached checkouts never borrow one: a fresh
+        # setup checkout of main may sit on a merged tip before its owner registers.
         $evidence = $null
+        $evidenceLocks = @()
         if ($worktree.Branch -and $mergedByName.ContainsKey($worktree.Branch)) {
             $pr = $mergedByName[$worktree.Branch]
+            if (-not $worktree.Detached -and $pr.number -and $pr.headRefName.Trim() -ceq $worktree.Branch -and
+                (Test-WorktreeContainsCommit -Repo $mainRepo -Head $sha -Commit $pr.headRefOid.Trim())) {
+                $evidenceLocks = @("pr-$([int]$pr.number)")
+            }
             $evidence = [pscustomobject]@{
                 Reason = "merged PR head branch '$($worktree.Branch)'"
                 ExpectedHead = $pr.headRefOid.Trim()
@@ -353,6 +374,11 @@ try {
                     }
                 }
                 if ($mergedAssociation -and $mergedAssociation.head.sha) {
+                    if ($worktree.Branch -and -not $worktree.Detached -and $mergedAssociation.number -and
+                        $mergedAssociation.head.ref -ceq $worktree.Branch -and
+                        (Test-WorktreeContainsCommit -Repo $mainRepo -Head $sha -Commit $mergedAssociation.head.sha.Trim())) {
+                        $evidenceLocks = @("pr-$([int]$mergedAssociation.number)")
+                    }
                     $headRepo = $mergedAssociation.head.repo.full_name
                     $baseRepo = $mergedAssociation.base.repo.full_name
                     $isCrossRepository = -not ($headRepo -and $baseRepo -and
@@ -403,6 +429,7 @@ try {
             continue
         }
 
+        if ($evidenceLocks.Count -gt 0) { $cleanupArgs.LockNames = $evidenceLocks }
         Remove-MergedWorktree @cleanupArgs
         if (Test-Path -LiteralPath $worktree.Path) { continue }
 

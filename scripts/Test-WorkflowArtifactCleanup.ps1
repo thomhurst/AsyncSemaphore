@@ -24,7 +24,7 @@ try {
     $removeArgs = @{ Repo = $repo; Worktree = $worktree }
     if ((Get-Command Remove-MergedWorktree).Parameters.ContainsKey('ExpectedHead')) { $removeArgs.ExpectedHead = $head }
 
-    foreach ($file in @('build.log', 'pressure.nettrace', 'pr-body.md', 'review-pr-body.md', 'sdk-review-disposition.md', 'rebase-validation.md', 'ci-fix-comment.md', 'throttle-issue.md', '.artifacts/run.txt')) {
+    foreach ($file in @('build.log', 'certificate-tests.binlog', 'pressure.nettrace', 'pr-body.md', 'review-pr-body.md', 'sdk-review-disposition.md', 'rebase-validation.md', 'ci-fix-comment.md', 'throttle-issue.md', '.artifacts/run.txt')) {
         git -C $worktree check-ignore --quiet -- $file
         Assert-True ($LASTEXITCODE -eq 0) "Workflow output is not ignored: $file"
         Assert-True (Test-DisposableWorktreePath -Path $file) "Workflow output is not disposable: $file"
@@ -57,6 +57,17 @@ try {
         Remove-MergedWorktree @removeArgs -WhatIf
         Assert-True (Test-Path -LiteralPath $worktree) 'Dry run removed a worktree.'
     }
+
+    # A busy-directory failure must record the caller's lock identity for the retry:
+    # this checkout's path and branch carry none of their own.
+    function Remove-VettedWorktree { return $false }
+    Remove-MergedWorktree @removeArgs -LockNames @('pr-123')
+    . (Join-Path $PSScriptRoot 'WorktreeCleanup.ps1')
+    $records = @(Get-ChildItem -LiteralPath (Get-PendingWorktreeRemovalDirectory -Repo $repo) -Filter '*.json')
+    Assert-True ($records.Count -eq 1) 'Interrupted removal did not record a pending removal.'
+    $recordedLocks = @((Get-Content -LiteralPath $records[0].FullName -Raw | ConvertFrom-Json).lockNames)
+    Assert-True (($recordedLocks -join ',') -ceq 'pr-123') "Pending removal recorded locks '$($recordedLocks -join ',')' instead of the caller's identity."
+    Remove-Item -LiteralPath $records[0].FullName
     Remove-MergedWorktree @removeArgs
     Assert-True (-not (Test-Path -LiteralPath $worktree)) 'Ignored workflow output prevented cleanup.'
     foreach ($path in @('src/source.log', 'src/pr-body.md', 'README.md', 'new-feature.md', '.env')) {
