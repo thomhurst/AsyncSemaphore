@@ -8,6 +8,10 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+    # Drafts skip every job (see the job conditions below): agents keep a PR in draft while
+    # reviewers review it, so the build and tests run once, on the approved head, when the PR is
+    # marked ready. `converted_to_draft` exists only to cancel a run still in progress.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
     inputs:
       publish-packages:
@@ -19,8 +23,17 @@ permissions:
   contents: write
   id-token: write
 
+# A newer event on the same PR, including conversion to draft, cancels its older run. Pushes to
+# main and manual dispatches get a group of their own, so a publishing run is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   modularpipeline:
+    # Skip drafts before a runner is allocated. The required check then reports skipped, which is
+    # not evidence for the head: marking the PR ready starts the run that is.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Pull Requests' }}
     runs-on: ubuntu-latest
 
@@ -58,6 +71,7 @@ jobs:
   # the memory model is weaker (ARM64) and where timers, thread wake-ups and the scheduler differ.
   test-matrix:
     name: Tests (${{ matrix.os }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ${{ matrix.os }}
     # A lost wake-up shows up as a test that never returns. Fail in minutes, not at the 6-hour default.
     timeout-minutes: 20
