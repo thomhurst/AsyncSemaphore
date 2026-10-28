@@ -149,7 +149,7 @@ Use repository scripts for merged-worktree cleanup; `[gone]` or ancestry alone i
 
 Stop only services/processes/containers started for this worktree. Never blanket-delete containers/volumes or stop shared lock Redis. Follow local lifecycle guidance; use Aspire only where an AppHost exists.
 
-Immediately after checkout, run `pwsh $agentLocks renew -LockName $lockName -Worktree $worktree` once to register its path. Stop owned processes, save needed evidence under the evidence root ([Isolation and ownership](#isolation-and-ownership)), then release in `finally` from a command whose `workdir` is the shared checkout, never the worktree: on Windows a shell whose current directory is inside the worktree blocks its deletion. Run `Merge-Pr.ps1` the same way. Release removes clean checkouts even for open PRs; branches and detached commits remain available for re-checkout. Never `git worktree lock` a checkout to keep it, except for the temporary setup lock; commit and push work you need. See [local worktree lifecycle](../../../scripts/WorktreeLifecycle.md) for preservation rules and crash behavior.
+Immediately after checkout, run `pwsh $agentLocks renew -LockName $lockName -Worktree $worktree` once to register its path. Stop owned processes, save needed evidence under the evidence root ([Isolation and ownership](#isolation-and-ownership)), then release in `finally` from a command whose `workdir` is the shared checkout, never the worktree: on Windows a shell whose current directory is inside the worktree blocks its deletion. Run `Merge-Pr.ps1` and `Enable-AutoMerge.ps1` the same way. Release removes clean checkouts even for open PRs; branches and detached commits remain available for re-checkout. Never `git worktree lock` a checkout to keep it, except for the temporary setup lock; commit and push work you need. See [local worktree lifecycle](../../../scripts/WorktreeLifecycle.md) for preservation rules and crash behavior.
 
 ## Maintain PRs
 
@@ -179,7 +179,7 @@ Open every PR as a draft (`gh pr create --draft`), including recovery and split 
 2. Read every review surface. A successful check, a request, an eyes reaction, silence, or a verdict on an older head is not approval. Require a completed, positive verdict from every required draft reviewer for the current head. Honor any formal approval that repository rules require; never approve your own PR or manufacture a reviewer's approval.
 3. Dispose of every finding as in the Feedback row, leaving no blocking or undecided finding and no unresolved thread. A fix push changes the head: keep the draft, let Claude review the new head, and request Codex once for it. Never reuse an earlier head's verdict. A pending review is a wait, not a reason to park or abandon the PR.
 4. Under the PR lock, re-fetch the head, draft state, verdicts, threads, and checks. Skipped or missing build/test checks on a draft are expected and do not block promotion. When every required reviewer approves the same current head and every finding is dispositioned, and no known conflict or CI failure remains, run `gh pr ready <N>`, then verify that `isDraft` is false and the head is unchanged. If the head changed during promotion, run `gh pr ready <N> --undo` and review the new head.
-5. Marking ready starts CI on the approved head. Take another item; do not wait for CI. A later survey merges the PR through the [Merge gate](#merge-gate) once that run passes. A check that a draft event skipped is not evidence for the ready head. Reviewers that skip drafts may review once the PR is ready; handle their findings under the Feedback row. When a finding or a CI failure on a ready PR needs a push, first return the PR to draft with `gh pr ready <N> --undo`, push the fix, and repeat this lifecycle for the new head.
+5. Marking ready starts CI on the approved head. Arm auto-merge immediately, without waiting for CI: run `pwsh scripts/Enable-AutoMerge.ps1 -Pr <N>` from the shared checkout, then take another item. GitHub merges once the required check passes on this head. Never arm auto-merge on a draft. Reviewers that skip drafts may review once the PR is ready; handle their findings under the Feedback row. When a finding or a CI failure on a ready PR needs a push, first return the PR to draft with `gh pr ready <N> --undo`, push the fix, and repeat this lifecycle for the new head. A push disarms auto-merge, so arm it again only after the new head is approved and ready.
 
 ### Rework budget
 
@@ -206,7 +206,9 @@ Keep new PRs small enough to converge. When an issue's change would touch many f
 
 ### Merge gate
 
-Merge requires an open, ready-for-review PR promoted through the [Draft review lifecycle](#draft-review-lifecycle); `MERGEABLE` and `CLEAN`; every applicable check present, terminal, and passing (`SUCCESS`, `SKIPPED`, or `NEUTRAL`, with successful legacy commit statuses); no unresolved threads, unaddressed comments, or outstanding review-body concerns; approval when required; and a bot review/CI cycle after the last fix push. Missing expected checks and nonterminal checks block merging. Reassess if the head changes.
+Ready PRs normally merge through native auto-merge, armed in step 5 of the [Draft review lifecycle](#draft-review-lifecycle). `pwsh scripts/Enable-AutoMerge.ps1 -Pr <N>` captures the head, runs `Assert-PrGreen.ps1 -ForAutoMerge`, and arms a squash merge pinned to that head. That gate allows pending CI but denies a draft, a conflicting or `BEHIND` branch, a failed check, a `claude-review` check that has not passed on this head, and unresolved threads. A ready PR without armed auto-merge gets the same call once its current head is approved. Use `Merge-Pr.ps1` below only to merge immediately when every check has already passed on the current head.
+
+An immediate merge requires an open, ready-for-review PR promoted through the [Draft review lifecycle](#draft-review-lifecycle); `MERGEABLE` and `CLEAN`; every applicable check present, terminal, and passing (`SUCCESS`, `SKIPPED`, or `NEUTRAL`, with successful legacy commit statuses); no unresolved threads, unaddressed comments, or outstanding review-body concerns; approval when required; and a bot review/CI cycle after the last fix push. Missing expected checks and nonterminal checks block merging. Reassess if the head changes.
 
 Use current repository rules/instructions for approval requirements. Historical merges without approval do not prove approval is optional; inaccessible protection APIs do not prove no protection exists.
 
@@ -214,9 +216,9 @@ Use current repository rules/instructions for approval requirements. Historical 
 pwsh scripts/Merge-Pr.ps1 -Pr <N> -Worktree $worktree
 ```
 
-Omit `-Worktree` only when none exists. The wrapper calls `Assert-PrGreen.ps1`, merges on a passing mechanical gate, and cleans up. Judge review dispositions and approval yourself; the script is necessary but insufficient.
+Omit `-Worktree` only when none exists. The wrapper calls `Assert-PrGreen.ps1`, merges on a passing mechanical gate, and cleans up. Judge review dispositions and approval yourself before either wrapper; the scripts are necessary but insufficient.
 
-Never bypass with direct `gh pr merge` or `--auto`. Nonzero exit means inspect/defer, not retry blindly. Cleanup warnings after a successful merge do not justify retrying; reconcile ambiguous results with GitHub state. Never delete fork branches through the base repository's `origin`.
+Never bypass the wrappers with direct `gh pr merge` or `gh pr merge --auto`. Nonzero exit means inspect/defer, not retry blindly. Cleanup warnings after a successful merge do not justify retrying; reconcile ambiguous results with GitHub state. Never delete fork branches through the base repository's `origin`.
 
 ## Pick an issue
 

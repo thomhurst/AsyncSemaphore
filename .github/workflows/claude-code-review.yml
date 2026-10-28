@@ -26,6 +26,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Auto-merge is armed for one reviewed head (scripts/Enable-AutoMerge.ps1). A push makes a new,
+  # unreviewed head, so it disarms auto-merge; the new head needs its own review and arming.
+  # Renovate arms its own PRs and is not reviewed here.
+  disarm-auto-merge:
+    if: |
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'synchronize' &&
+      github.event.pull_request.auto_merge != null &&
+      !startsWith(github.event.pull_request.head.ref, 'renovate/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    # Write scopes are safe here only because this job checks nothing out and runs no PR code.
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Disarm auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr merge "$PR" --disable-auto
+          echo "::notice::Auto-merge disarmed by a push; re-arm with scripts/Enable-AutoMerge.ps1 after this head's review."
+
   claude-review:
     if: |
       github.event_name == 'workflow_dispatch' ||

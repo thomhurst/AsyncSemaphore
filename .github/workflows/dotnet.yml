@@ -31,8 +31,7 @@ concurrency:
 
 jobs:
   modularpipeline:
-    # Skip drafts before a runner is allocated. The required check then reports skipped, which is
-    # not evidence for the head: marking the PR ready starts the run that is.
+    # Skip drafts before a runner is allocated. Marking the PR ready starts the run that counts.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Pull Requests' }}
     runs-on: ubuntu-latest
@@ -98,3 +97,30 @@ jobs:
         run: dotnet test --project AsyncSemaphore.UnitTests -c Release --max-parallel-test-modules 1
       - name: Unit tests (netstandard2.0 build)
         run: dotnet test --project AsyncSemaphore.UnitTests.NetStandard -c Release
+
+  # The one check branch protection requires, and so the one armed auto-merge waits for. Every CI
+  # job feeds it, and it runs on every non-draft PR, so the requirement is never left waiting.
+  #
+  # The name is an expression on purpose. GitHub evaluates a job's name only when the job runs;
+  # a job skipped by `if:` reports its check under the raw expression text instead. A draft run
+  # therefore reports `needs.modularpipeline.result != '' && 'CI Passed' || ...` as skipped, never
+  # a skipped (and so passing) `CI Passed` that auto-merge could merge on before the ready run
+  # registers. A fixed job name, such as `modularpipeline`, does report as skipped on a draft.
+  ci-passed:
+    name: ${{ needs.modularpipeline.result != '' && 'CI Passed' || 'CI Passed (not run)' }}
+    needs: [modularpipeline, test-matrix]
+    # always(): a failed or cancelled job must still produce a failing `CI Passed`.
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every CI job to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"' <<< "$RESULTS")
+          if [ -n "$failed" ]; then
+            echo "::error::CI jobs did not succeed: $(echo "$failed" | paste -sd ' ')"
+            exit 1
+          fi

@@ -2,13 +2,20 @@
 # Fail-closed merge gate for the issue-pr-loop skill.
 #
 # Exits 0 ONLY when PR #<N> is provably safe to merge:
-#   - state OPEN
+#   - state OPEN and not a draft
 #   - mergeable == MERGEABLE
 #   - mergeStateStatus == CLEAN
 #   - every status check is terminal AND passing (CheckRun: status=COMPLETED and
 #     conclusion in SUCCESS/SKIPPED/NEUTRAL; StatusContext: state=SUCCESS)
 #   - no current-head top-level review has actionable finding headings
 #   - no unresolved review threads
+#
+# -ForAutoMerge is the gate for arming native auto-merge (Enable-AutoMerge.ps1).
+# GitHub waits for the required checks itself, so CI may still be pending, but the
+# PR must be ready and MERGEABLE, not BEHIND or conflicting, no check may have failed,
+# and the `claude-review` check must have completed successfully on this head. The
+# review and thread rules are the same in both modes. State and check rules live in
+# AssertPrGreenChecks.ps1.
 #
 # Any other state — pending/queued/in-progress checks, an empty rollup, a failed
 # check, an unresolved thread, or an API hiccup — exits 1 so the caller MUST NOT
@@ -17,16 +24,18 @@
 # Enforce the queue's mechanical merge requirements independently of GitHub
 # branch protection. The skill also checks judgment-based review signals.
 #
-# Usage: pwsh scripts/Assert-PrGreen.ps1 -Pr 1234 [-Repo owner/name]
-# Exit:  0 = safe to merge; 1 = DO NOT MERGE (reason printed to stderr).
+# Usage: pwsh scripts/Assert-PrGreen.ps1 -Pr 1234 [-Repo owner/name] [-ForAutoMerge]
+# Exit:  0 = safe to merge (or arm); 1 = DO NOT MERGE (reason printed to stderr).
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][int]$Pr,
-    [string]$Repo
+    [string]$Repo,
+    [switch]$ForAutoMerge
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'AssertPrGreenChecks.ps1')
 . (Join-Path $PSScriptRoot 'AssertPrGreenReviewHeuristics.ps1')
 . (Join-Path $PSScriptRoot 'AssertPrGreenReviewThreads.ps1')
 
@@ -39,7 +48,7 @@ $repoArgs = @()
 if ($Repo) { $repoArgs = @('--repo', $Repo) }
 
 # Re-fetch fresh — survey output goes stale within seconds.
-$raw = gh pr view $Pr @repoArgs --json number,state,mergeable,mergeStateStatus,statusCheckRollup,latestReviews,commits 2>$null
+$raw = gh pr view $Pr @repoArgs --json number,state,isDraft,mergeable,mergeStateStatus,statusCheckRollup,latestReviews,commits 2>$null
 if ($LASTEXITCODE -ne 0) { Deny "gh pr view failed (exit $LASTEXITCODE)" }
 try {
     $view = $raw | ConvertFrom-Json
@@ -48,41 +57,9 @@ catch {
     Deny "could not parse PR state: $($_.Exception.Message)"
 }
 
-if ($view.state -ne 'OPEN') { Deny "state=$($view.state) (need OPEN)" }
-if ($view.mergeable -ne 'MERGEABLE') { Deny "mergeable=$($view.mergeable) (need MERGEABLE)" }
-if ($view.mergeStateStatus -ne 'CLEAN') { Deny "mergeStateStatus=$($view.mergeStateStatus) (need CLEAN)" }
-
+$stateDenial = Get-PrStateDenial -View $view -ForAutoMerge:$ForAutoMerge
+if ($stateDenial) { Deny $stateDenial }
 $checks = @($view.statusCheckRollup | Where-Object { $null -ne $_ })
-if ($checks.Count -eq 0) {
-    Deny "statusCheckRollup is empty -- no checks registered yet; refusing to merge blind"
-}
-
-$allowedConclusions = @('SUCCESS', 'SKIPPED', 'NEUTRAL')
-$bad = @()
-foreach ($c in $checks) {
-    if ($null -ne $c.status) {
-        # CheckRun: must be terminal AND passing.
-        if ($c.status -ne 'COMPLETED') {
-            $bad += "$($c.name): status=$($c.status)"
-            continue
-        }
-        if ($allowedConclusions -notcontains $c.conclusion) {
-            $bad += "$($c.name): conclusion=$($c.conclusion)"
-        }
-    }
-    elseif ($null -ne $c.state) {
-        # StatusContext: state must be SUCCESS.
-        if ($c.state -ne 'SUCCESS') {
-            $bad += "$($c.context): state=$($c.state)"
-        }
-    }
-    else {
-        $bad += "unrecognized check entry: $($c | ConvertTo-Json -Compress)"
-    }
-}
-if ($bad.Count -gt 0) {
-    Deny ("checks not green: " + ($bad -join '; '))
-}
 
 $headCommit = @($view.commits | Where-Object { $null -ne $_ }) | Select-Object -Last 1
 $headCommittedAt = if ($headCommit) { ConvertTo-UtcDateTimeOffset $headCommit.committedDate } else { $null }
@@ -161,5 +138,10 @@ catch {
 $unresolved = @($reviewThreads | Where-Object { -not $_.isResolved }).Count
 if ($unresolved -gt 0) { Deny "$unresolved unresolved review thread(s)" }
 
-Write-Host "OK #${Pr} -- MERGEABLE, CLEAN, $($checks.Count) check(s) green, no unresolved threads. Safe to merge."
+if ($ForAutoMerge) {
+    Write-Host "OK #${Pr} -- ready, MERGEABLE, no failed checks, claude-review complete, no unresolved threads. Safe to arm auto-merge."
+}
+else {
+    Write-Host "OK #${Pr} -- MERGEABLE, CLEAN, $($checks.Count) check(s) green, no unresolved threads. Safe to merge."
+}
 exit 0
