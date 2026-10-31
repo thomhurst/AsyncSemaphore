@@ -36,6 +36,7 @@ dotnet run --project AsyncSemaphore.Benchmark -c Release -- --filter '<benchmark
 ## Pull requests
 
 - Open every agent-created PR as a draft (`gh pr create --draft`) and follow [issue-pr-loop § Draft review lifecycle](.agents/skills/issue-pr-loop/SKILL.md#draft-review-lifecycle), even outside the loop: mark it ready only after Claude and Codex approve the current head and every finding is dispositioned, then arm auto-merge at once with `scripts/Enable-AutoMerge.ps1` (never on a draft, never `gh pr merge --auto` directly).
+- Every review cycle, check both review threads (`pulls/<N>/reviews`, `pulls/<N>/comments`, GraphQL `reviewThreads`) and PR conversation comments (`issues/<N>/comments`). Reviewers differ: Claude often posts its review as a conversation comment, while other agents use review threads. A finding on either surface needs a disposition before merge.
 - Resolve each PR review thread, whether a human or a bot opened it, as soon as you have dispositioned it: the fix is pushed to the PR head and your reply names the commit, or your reply pushes back on the finding with evidence. Leave a thread open only while it has no disposition. If the reviewer replies after your disposition, unresolve the thread and handle the reply.
 
 ## Autonomous self-improvement
