@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Exercises the loop driver's PR survey and deferral fingerprints without GitHub, Redis, or an agent process.
 # Run locally with PowerShell 7: pwsh scripts/Test-IssuePrLoop.ps1
 $ErrorActionPreference = 'Stop'

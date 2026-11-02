@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # AssertPrGreenChecks.ps1
 # PR state and status-check rules for Assert-PrGreen.ps1, kept free of GitHub calls so
 # Test-AssertPrGreenChecks.ps1 can exercise them.

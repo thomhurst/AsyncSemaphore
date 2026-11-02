@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Exercises the merge and auto-merge gate rules in AssertPrGreenChecks.ps1 without GitHub.
 # Run locally with PowerShell 7: pwsh scripts/Test-AssertPrGreenChecks.ps1
 $ErrorActionPreference = 'Stop'

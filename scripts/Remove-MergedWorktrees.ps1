@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # Remove-MergedWorktrees.ps1
 # Safety-net sweep for the issue-pr-loop skill: removes worktrees whose branch has
 # merged or whose matching PR closed unmerged, regardless of who completed the PR.
