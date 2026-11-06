@@ -23,7 +23,7 @@ dotnet test --project AsyncSemaphore.Analyzers/AsyncSemaphore.Analyzers.Tests
 ## Performance validation
 
 - Benchmark or profile before every change and after the final edit. Prefer `AsyncSemaphore.Benchmark`; add coverage when needed to exercise affected behavior.
-- Use the same representative workloads, Release configuration, machine, SDK/runtime, and measurement settings for both runs. Record the baseline revision, existing local changes, environment, and exact commands; preserve baseline and final artifacts separately. Build a baseline in its own worktree and keep artifacts under the evidence root; locations are in [issue-pr-loop § Isolation and ownership](.agents/skills/issue-pr-loop/SKILL.md#isolation-and-ownership).
+- Use the same representative workloads, Release configuration, machine, SDK/runtime, and measurement settings for both runs. Record the baseline revision, existing local changes, environment, and exact commands; preserve baseline and final artifacts separately. Build a baseline in its own worktree and keep artifacts under the evidence root; locations are in [issue-pr-loop § Worktrees and evidence](.agents/skills/issue-pr-loop/references/repository.md#worktrees-and-evidence).
 - Compare time/throughput, allocations, GC, and relevant contention/latency. Repeat noisy measurements and fix regressions before completion; do not weaken workloads or hide unfavorable cases. Tests do not replace measurements.
 - Include before/after results, percentage changes, commands, and artifact paths in the handoff and PR description. If measurements are blocked or inconclusive, explicitly leave performance validation incomplete and do not claim unchanged performance or full validation.
 
@@ -35,7 +35,7 @@ dotnet run --project AsyncSemaphore.Benchmark -c Release -- --filter '<benchmark
 
 ## Pull requests
 
-- Open every agent-created PR as a draft (`gh pr create --draft`) and follow [issue-pr-loop § Draft review lifecycle](.agents/skills/issue-pr-loop/SKILL.md#draft-review-lifecycle), even outside the loop: mark it ready only after Claude and Codex approve the current head and every finding is dispositioned, then arm auto-merge at once with `scripts/Enable-AutoMerge.ps1` (never on a draft, never `gh pr merge --auto` directly).
+- Open every agent-created PR as a draft (`gh pr create --draft`) and follow [issue-pr-loop § Draft review lifecycle](.agents/skills/issue-pr-loop/references/draft-review.md), even outside the loop: mark it ready only after Claude and Codex approve the current head and every finding is dispositioned, then arm auto-merge at once with `scripts/Enable-AutoMerge.ps1` (never on a draft, never `gh pr merge --auto` directly).
 - Every review cycle, check both review threads (`pulls/<N>/reviews`, `pulls/<N>/comments`, GraphQL `reviewThreads`) and PR conversation comments (`issues/<N>/comments`). Reviewers differ: Claude often posts its review as a conversation comment, while other agents use review threads. A finding on either surface needs a disposition before merge.
 - Resolve each PR review thread, whether a human or a bot opened it, as soon as you have dispositioned it: the fix is pushed to the PR head and your reply names the commit, or your reply pushes back on the finding with evidence. Leave a thread open only while it has no disposition. If the reviewer replies after your disposition, unresolve the thread and handle the reply.
 
