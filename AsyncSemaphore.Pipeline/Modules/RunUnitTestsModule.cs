@@ -1,24 +1,22 @@
+using ModularPipelines;
 using ModularPipelines.Context;
-using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
-using ModularPipelines.Git.Extensions;
-using ModularPipelines.Models;
-using ModularPipelines.Modules;
 
 namespace AsyncSemaphore.Pipeline.Modules;
 
 public class RunUnitTestsModule : Module<List<CommandResult>>
 {
-    protected override async Task<List<CommandResult>?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<List<CommandResult>> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         var results = new List<CommandResult>();
 
-        foreach (var unitTestProjectFile in context
-                     .Git().RootDirectory!
+        var git = await context.Tools.Git.Information.GetRequiredInfoAsync(cancellationToken);
+
+        foreach (var unitTestProjectFile in git.Root
                      .GetFiles(file => file.Path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
                                        && file.Path.Contains("Tests", StringComparison.OrdinalIgnoreCase)))
         {
-            results.Add(await context.DotNet().Test(new DotNetTestOptions
+            results.Add(await context.Tools.DotNet.TestAsync(new DotNetTestOptions
             {
                 Project = unitTestProjectFile,
 
