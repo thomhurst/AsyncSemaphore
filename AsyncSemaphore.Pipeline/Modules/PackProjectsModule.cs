@@ -1,12 +1,8 @@
 using Microsoft.Extensions.Logging;
-using ModularPipelines.Attributes;
+using ModularPipelines;
 using ModularPipelines.Context;
-using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
-using ModularPipelines.Git.Extensions;
-using ModularPipelines.Models;
-using ModularPipelines.Modules;
-using File = ModularPipelines.FileSystem.File;
+using File = ModularPipelines.FileSystem.FilePath;
 
 namespace AsyncSemaphore.Pipeline.Modules;
 
@@ -15,14 +11,15 @@ namespace AsyncSemaphore.Pipeline.Modules;
 [DependsOn<RunUnitTestsModule>]
 public class PackProjectsModule : Module<List<CommandResult>>
 {
-    protected override async Task<List<CommandResult>?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<List<CommandResult>> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         var results = new List<CommandResult>();
         var packageVersion = await context.GetModule<NugetVersionGeneratorModule>();
-        var projectFiles = context.Git().RootDirectory!.GetFiles(f => GetProjectsPredicate(f, context));
+        var git = await context.Tools.Git.Information.GetRequiredInfoAsync(cancellationToken);
+        var projectFiles = git.Root.GetFiles(f => GetProjectsPredicate(f, context));
         foreach (var projectFile in projectFiles)
         {
-            results.Add(await context.DotNet().Pack(new DotNetPackOptions {
+            results.Add(await context.Tools.DotNet.PackAsync(new DotNetPackOptions {
                 ProjectSolution = projectFile.Path,
                 Configuration = "Release",
                 Properties = new KeyValue[]

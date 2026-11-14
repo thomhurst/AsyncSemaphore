@@ -1,19 +1,17 @@
-using ModularPipelines.Attributes;
+using ModularPipelines;
 using ModularPipelines.Context;
-using ModularPipelines.Extensions;
-using ModularPipelines.Git.Extensions;
-using ModularPipelines.Modules;
-using File = ModularPipelines.FileSystem.File;
+using ModularPipelines.FileSystem;
+using File = ModularPipelines.FileSystem.FilePath;
 
 namespace AsyncSemaphore.Pipeline.Modules;
 
 [DependsOn<PackProjectsModule>]
 public class PackagePathsModule : Module<List<File>>
 {
-    protected override async Task<List<File>?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    protected override async Task<List<File>> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
-        await Task.Yield();
+        var git = await context.Tools.Git.Information.GetRequiredInfoAsync(cancellationToken);
 
-        return context.Git().RootDirectory.AssertExists().GetFiles(x => x.Extension == ".nupkg").ToList();
+        return git.Root.AssertExists().GetFiles(x => x.Extension == ".nupkg").ToList();
     }
 }

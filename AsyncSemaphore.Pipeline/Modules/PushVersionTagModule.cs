@@ -1,39 +1,38 @@
-using ModularPipelines.Attributes;
-using ModularPipelines.Configuration;
+using ModularPipelines;
 using ModularPipelines.Context;
-using ModularPipelines.Git.Attributes;
-using ModularPipelines.Git.Extensions;
+using ModularPipelines.Exceptions;
+using ModularPipelines.Git;
 using ModularPipelines.Git.Options;
-using ModularPipelines.Models;
-using ModularPipelines.Modules;
 
 namespace AsyncSemaphore.Pipeline.Modules;
 
 [RunOnlyOnBranch("main")]
-[RunOnLinuxOnly]
+[RunIf<OnLinux>]
 [DependsOn<NugetVersionGeneratorModule>]
 public class PushVersionTagModule : Module<CommandResult>
 {
-    protected override ModuleConfiguration Configure() => ModuleConfiguration.Create()
-        .WithIgnoreFailuresWhen(async (ctx, ex) =>
+    protected override void Configure(ModuleConfigurationBuilder module) => module
+        .WithIgnoreFailuresWhen(async (ctx, ex, _) =>
         {
             var versionInformation = await ctx.GetModule<NugetVersionGeneratorModule>();
-            return ex.Message.Contains($"tag 'v{versionInformation.ValueOrDefault}' already exists");
-        })
-        .Build();
 
-    protected override async Task<CommandResult?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+            // v4 no longer puts the command output in the exception message.
+            return ex is CommandException commandException
+                   && commandException.Result.StandardError.Contains($"tag 'v{versionInformation.ValueOrDefault}' already exists");
+        });
+
+    protected override async Task<CommandResult> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         var versionInformation = await context.GetModule<NugetVersionGeneratorModule>();
 
-        await context.Git().Commands.Tag(new GitTagOptions
+        await context.Tools.Git.Commands.Branches.TagAsync(new GitTagOptions
         {
             TagName = $"v{versionInformation.ValueOrDefault}",
-        }, token: cancellationToken);
+        }, cancellationToken: cancellationToken);
 
-        return await context.Git().Commands.Push(new GitPushOptions
+        return await context.Tools.Git.Commands.Remotes.PushAsync(new GitPushOptions
         {
             Tags = true,
-        }, token: cancellationToken);
+        }, cancellationToken: cancellationToken);
     }
 }

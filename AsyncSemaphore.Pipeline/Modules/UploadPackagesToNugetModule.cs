@@ -2,20 +2,15 @@ using AsyncSemaphore.Pipeline.Settings;
 using EnumerableAsyncProcessor.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using ModularPipelines.Attributes;
-using ModularPipelines.Configuration;
+using ModularPipelines;
 using ModularPipelines.Context;
-using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
-using ModularPipelines.Git.Extensions;
-using ModularPipelines.Models;
-using ModularPipelines.Modules;
 
 namespace AsyncSemaphore.Pipeline.Modules;
 
 [DependsOn<RunUnitTestsModule>]
 [DependsOn<PackagePathsModule>]
-public class UploadPackagesToNugetModule : Module<CommandResult[]>
+public class UploadPackagesToNugetModule : Module<CommandResult[]?>
 {
     private readonly IOptions<NuGetSettings> _options;
 
@@ -24,10 +19,10 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
         _options = options;
     }
 
-    protected override ModuleConfiguration Configure() => ModuleConfiguration.Create()
-        .WithSkipWhen(async context =>
+    protected override void Configure(ModuleConfigurationBuilder module) => module
+        .WithSkipWhen(async (context, cancellationToken) =>
         {
-            var gitVersionInfo = await context.Git().Versioning.GetGitVersioningInformation();
+            var gitVersionInfo = await context.Tools.Git.Versioning.GetVersioningInformationAsync(cancellationToken);
 
             if (gitVersionInfo.BranchName != "main")
             {
@@ -43,23 +38,23 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
             }
 
             return false;
-        })
-        .WithBeforeExecute(async context =>
-        {
-            var packagePaths = await context.GetModule<PackagePathsModule>();
+        });
 
-            foreach (var packagePath in packagePaths.ValueOrDefault!)
-            {
-                context.Logger.LogInformation("Uploading {File}", packagePath);
-            }
-        })
-        .Build();
+    protected override async Task OnBeforeExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
+    {
+        var packagePaths = await context.GetModule<PackagePathsModule>();
+
+        foreach (var packagePath in packagePaths.ValueOrDefault!)
+        {
+            context.Logger.LogInformation("Uploading {File}", packagePath);
+        }
+    }
 
     protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(_options.Value.ApiKey);
 
-        var gitVersionInformation = await context.Git().Versioning.GetGitVersioningInformation();
+        var gitVersionInformation = await context.Tools.Git.Versioning.GetVersioningInformationAsync(cancellationToken);
 
         if (gitVersionInformation.BranchName != "main")
         {
@@ -68,11 +63,10 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
 
         var packagePaths = await context.GetModule<PackagePathsModule>();
 
-        return await packagePaths.ValueOrDefault!.SelectAsync(async file => await context.DotNet()
-            .Nuget
-            .Push(new DotNetNugetPushOptions
+        return await packagePaths.ValueOrDefault!.SelectAsync(async file => await context.Tools.DotNet
+            .NuGet
+            .PushAsync(new DotNetNuGetPushOptions([file])
             {
-                Path = file,
                 Source = "https://api.nuget.org/v3/index.json",
                 ApiKey = _options.Value.ApiKey!
             }), cancellationToken: cancellationToken).ProcessOneAtATime();

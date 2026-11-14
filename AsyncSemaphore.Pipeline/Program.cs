@@ -2,7 +2,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModularPipelines;
-using ModularPipelines.Extensions;
 using AsyncSemaphore.Pipeline.Modules;
 using AsyncSemaphore.Pipeline.Modules.LocalMachine;
 using AsyncSemaphore.Pipeline.Settings;
@@ -17,20 +16,20 @@ builder.Services.Configure<NuGetSettings>(builder.Configuration.GetSection("NuGe
 
 if (builder.Environment.IsDevelopment())
 {
-    builder.Services.AddModule<CreateLocalNugetFolderModule>()
+    builder.AddModule<CreateLocalNugetFolderModule>()
         .AddModule<AddLocalNugetSourceModule>()
         .AddModule<UploadPackagesToLocalNuGetModule>();
 }
 else
 {
-    builder.Services.AddModule<UploadPackagesToNugetModule>();
+    builder.AddModule<UploadPackagesToNugetModule>();
 }
 
-builder.Services.AddModule<RunUnitTestsModule>();
-builder.Services.AddModule<NugetVersionGeneratorModule>();
-builder.Services.AddModule<PackProjectsModule>();
-builder.Services.AddModule<PackageFilesRemovalModule>();
-builder.Services.AddModule<PushVersionTagModule>();
-builder.Services.AddModule<PackagePathsModule>();
+builder.AddModule<RunUnitTestsModule>();
+builder.AddModule<NugetVersionGeneratorModule>();
+builder.AddModule<PackProjectsModule>();
+builder.AddModule<PackageFilesRemovalModule>();
+builder.AddModule<PushVersionTagModule>();
+builder.AddModule<PackagePathsModule>();
 
-await builder.ExecutePipelineAsync();
+await builder.RunAsync();

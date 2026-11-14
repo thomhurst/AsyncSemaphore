@@ -416,3 +416,6 @@ FodyWeavers.xsd
 
 # Local SDK installs (dotnet-install.ps1 -InstallDir .dotnet)
 /.dotnet/
+
+# ModularPipelines local run history
+.modularpipelines/run-history/
